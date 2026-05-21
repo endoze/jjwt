@@ -113,3 +113,10 @@ pub struct HookArgs {
     pub name: String,
     pub current_workspace: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListRow {
+    pub name: String,
+    pub path: PathBuf,
+    pub url: String,
+}

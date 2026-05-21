@@ -1,3 +1,4 @@
+use crate::core::format::format_list;
 use crate::core::template::render;
 use crate::core::types::*;
 use std::path::PathBuf;
@@ -191,6 +192,28 @@ pub fn plan_hook(
         cwd: ws.path.clone(),
         env: hook_env(&args.current_workspace, &ws.path),
     });
+
+    Ok(plan)
+}
+
+pub fn plan_list(cfg: &Config, obs: &ObservedState) -> Result<Plan, CoreError> {
+    let mut rows = Vec::with_capacity(obs.workspaces.len());
+
+    for w in &obs.workspaces {
+        let url = if let Some(list) = &cfg.list {
+            let ctx = RenderContext { branch: w.name.clone() };
+
+            render(&list.url, &ctx)?
+        } else {
+            String::new()
+        };
+
+        rows.push(ListRow { name: w.name.clone(), path: w.path.clone(), url });
+    }
+
+    let mut plan = Plan::new();
+
+    plan.push(Action::PrintLine(format_list(&rows)));
 
     Ok(plan)
 }
