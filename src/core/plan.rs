@@ -89,3 +89,69 @@ pub fn plan_switch(
 
     Ok(plan)
 }
+
+fn render_pre_remove_hooks(
+    cfg: &Config,
+    branch: &str,
+    cwd: &std::path::Path,
+) -> Result<Vec<Action>, CoreError> {
+    let ctx = RenderContext { branch: branch.into() };
+    let mut out = Vec::new();
+
+    for group in &cfg.pre_remove {
+        for (name, tmpl) in group {
+            let rendered = render(tmpl, &ctx)?;
+
+            out.push(Action::RunHook {
+                name: name.clone(),
+                rendered_cmd: rendered,
+                cwd: cwd.to_path_buf(),
+                env: hook_env(branch, cwd),
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+pub fn plan_remove(
+    cfg: &Config,
+    args: &RemoveArgs,
+    obs: &ObservedState,
+) -> Result<Plan, CoreError> {
+    if !obs.is_jj_repo {
+        return Err(CoreError::NotJjRepo);
+    }
+
+    let ws = obs
+        .workspaces
+        .iter()
+        .find(|w| w.name == args.name)
+        .ok_or_else(|| CoreError::WorkspaceMissing(args.name.clone()))?;
+
+    if !args.force {
+        if obs.target_workspace_dirty {
+            return Err(CoreError::WorkspaceDirty(args.name.clone()));
+        }
+
+        if obs.target_bookmark_exists && !obs.target_bookmark_merged {
+            return Err(CoreError::BookmarkUnmerged(args.name.clone()));
+        }
+    }
+
+    let ws_path = ws.path.clone();
+    let mut plan = Plan::new();
+
+    for a in render_pre_remove_hooks(cfg, &args.name, &ws_path)? {
+        plan.push(a);
+    }
+
+    plan.push(Action::JjWorkspaceForget { name: args.name.clone() });
+    plan.push(Action::DeleteDir { path: ws_path });
+
+    if obs.target_bookmark_exists && obs.target_bookmark_merged {
+        plan.push(Action::JjBookmarkDelete { name: args.name.clone() });
+    }
+
+    Ok(plan)
+}
