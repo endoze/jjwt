@@ -52,6 +52,16 @@ fn run(cmd: &mut std::process::Command) -> Result<std::process::Output> {
     Ok(out)
 }
 
+/// Compute the path to a workspace directory. For "default", this is repo_root;
+/// for other workspaces, it is repo_root/.worktrees/<name>.
+fn workspace_dir(repo_root: &Path, name: &str) -> std::path::PathBuf {
+    if name == "default" {
+        repo_root.to_path_buf()
+    } else {
+        repo_root.join(".worktrees").join(name)
+    }
+}
+
 impl Jj for JjCli {
     fn repo_root(&self, start: &Path) -> Result<std::path::PathBuf> {
         let mut p = start.to_path_buf();
@@ -74,27 +84,28 @@ impl Jj for JjCli {
             .arg("--repository")
             .arg(repo_root)
             .arg("workspace")
-            .arg("list")
-            .arg("-T")
-            .arg(r#"name ++ "\n""#))?;
+            .arg("list"))?;
 
         let text = String::from_utf8_lossy(&out.stdout);
         let mut workspaces = Vec::new();
 
         for line in text.lines() {
-            let name = line.trim().to_string();
+            let trimmed = line.trim();
+
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let name = trimmed.split_whitespace().next().unwrap_or("").to_string();
 
             if name.is_empty() {
                 continue;
             }
 
-            let path = if name == "default" {
-                repo_root.to_path_buf()
-            } else {
-                repo_root.join(".worktrees").join(&name)
-            };
+            let stale = trimmed.contains("(stale)");
+            let path = workspace_dir(repo_root, &name);
 
-            workspaces.push(Workspace { name, path, stale: false });
+            workspaces.push(Workspace { name, path, stale });
         }
 
         Ok(workspaces)
@@ -130,7 +141,7 @@ impl Jj for JjCli {
     }
 
     fn workspace_update_stale(&self, repo_root: &Path, name: &str) -> Result<()> {
-        let ws_path = repo_root.join(".worktrees").join(name);
+        let ws_path = workspace_dir(repo_root, name);
 
         run(std::process::Command::new(&self.jj_path)
             .current_dir(&ws_path)
@@ -203,7 +214,7 @@ impl Jj for JjCli {
     }
 
     fn workspace_is_dirty(&self, repo_root: &Path, workspace: &str) -> Result<bool> {
-        let ws_path = repo_root.join(".worktrees").join(workspace);
+        let ws_path = workspace_dir(repo_root, workspace);
 
         let out = std::process::Command::new(&self.jj_path)
             .current_dir(&ws_path)
