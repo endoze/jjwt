@@ -76,15 +76,13 @@ impl Jj for JjCli {
             .arg("workspace")
             .arg("list")
             .arg("-T")
-            .arg(r#"name ++ "\t" ++ if(is_stale, "stale", "ok") ++ "\n""#))?;
+            .arg(r#"name ++ "\n""#))?;
 
         let text = String::from_utf8_lossy(&out.stdout);
         let mut workspaces = Vec::new();
 
         for line in text.lines() {
-            let mut parts = line.splitn(2, '\t');
-            let name = parts.next().unwrap_or("").trim().to_string();
-            let stale = parts.next().unwrap_or("ok").trim() == "stale";
+            let name = line.trim().to_string();
 
             if name.is_empty() {
                 continue;
@@ -96,13 +94,18 @@ impl Jj for JjCli {
                 repo_root.join(".worktrees").join(&name)
             };
 
-            workspaces.push(Workspace { name, path, stale });
+            workspaces.push(Workspace { name, path, stale: false });
         }
 
         Ok(workspaces)
     }
 
     fn workspace_add(&self, repo_root: &Path, name: &str, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("failed to create workspace parent dir: {e}"))?;
+        }
+
         run(std::process::Command::new(&self.jj_path)
             .arg("--repository")
             .arg(repo_root)
