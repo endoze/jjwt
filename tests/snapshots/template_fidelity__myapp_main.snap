@@ -1,0 +1,27 @@
+---
+source: tests/template_fidelity.rs
+expression: actual
+---
+[list.url]
+http://localhost:19926
+[pre-start.0.envrc]
+cat > .envrc.local <<'ENVRC'
+export MYAPP_POSTGRES_PORT=16406
+export MYAPP_POSTGRES_CONTAINER_NAME="myapp-main-postgres"
+export MYAPP_POSTGRES_VOLUME_NAME="myapp-main-pgdata"
+export PORT=19926
+ENVRC
+[pre-start.0.direnv]
+direnv allow .
+[pre-start.0.mise]
+command -v mise >/dev/null 2>&1 && mise trust
+[pre-start.1.db-start]
+direnv exec . make db-start
+[pre-start.2.db-setup]
+direnv exec . make db-setup
+[pre-remove.0.db-stop]
+docker stop myapp-main-postgres 2>/dev/null || true
+[pre-remove.1.db-rm]
+docker rm myapp-main-postgres 2>/dev/null || true
+[pre-remove.2.db-vol]
+docker volume rm myapp-main-pgdata 2>/dev/null || true

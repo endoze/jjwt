@@ -1,0 +1,38 @@
+# Worktrunk project configuration for myapp
+#
+# This file configures worktrunk (wt) for worktree-based development.
+# Worktrunk is optional - this file has no effect if wt is not installed.
+
+[list]
+url = "http://localhost:{{ ('app-' ~ branch) | hash_port }}"
+
+# Pre-start hooks run once when a worktree is created (blocking)
+
+[[pre-start]]
+envrc = """
+cat > .envrc.local <<'ENVRC'
+export MYAPP_POSTGRES_PORT={{ ('db-' ~ branch) | hash_port }}
+export MYAPP_POSTGRES_CONTAINER_NAME="myapp-{{ branch | sanitize }}-postgres"
+export MYAPP_POSTGRES_VOLUME_NAME="myapp-{{ branch | sanitize }}-pgdata"
+export PORT={{ ('app-' ~ branch) | hash_port }}
+ENVRC
+"""
+direnv = "direnv allow ."
+mise = "command -v mise >/dev/null 2>&1 && mise trust"
+
+[[pre-start]]
+db-start = "direnv exec . make db-start"
+
+[[pre-start]]
+db-setup = "direnv exec . make db-setup"
+
+# Pre-remove hooks run before `wt remove <branch>`
+
+[[pre-remove]]
+db-stop = "docker stop myapp-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+
+[[pre-remove]]
+db-rm = "docker rm myapp-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+
+[[pre-remove]]
+db-vol = "docker volume rm myapp-{{ branch | sanitize }}-pgdata 2>/dev/null || true"
