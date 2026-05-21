@@ -1,0 +1,28 @@
+[package]
+name = "jjwt"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "jujutsu-backed worktrunk-compatible workspace manager"
+repository = "https://github.com/endoze/jjwt"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "jjwt"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+indexmap = { version = "2", features = ["serde"] }
+minijinja = "2"
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+toml = "0.8"
+which = "6"
+
+[dev-dependencies]
+insta = { version = "1", features = ["yaml"] }
+tempfile = "3"
