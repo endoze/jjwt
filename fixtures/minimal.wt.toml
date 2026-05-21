@@ -1,0 +1,12 @@
+[list]
+url = "http://localhost:{{ ('app-' ~ branch) | hash_port }}"
+
+[[pre-start]]
+direnv = "direnv allow ."
+envrc = "echo OK"
+
+[[pre-start]]
+db = "make db-start"
+
+[[pre-remove]]
+db_stop = "make db-stop"
