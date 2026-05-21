@@ -155,3 +155,42 @@ pub fn plan_remove(
 
     Ok(plan)
 }
+
+pub fn plan_hook(
+    cfg: &Config,
+    args: &HookArgs,
+    obs: &ObservedState,
+) -> Result<Plan, CoreError> {
+    let ws = obs
+        .workspaces
+        .iter()
+        .find(|w| w.name == args.current_workspace)
+        .ok_or_else(|| CoreError::WorkspaceMissing(args.current_workspace.clone()))?;
+
+    let mut matches: Vec<&str> = Vec::new();
+
+    for group in cfg.pre_start.iter().chain(cfg.pre_remove.iter()) {
+        if let Some(tmpl) = group.get(&args.name) {
+            matches.push(tmpl.as_str());
+        }
+    }
+
+    let tmpl = match matches.len() {
+        0 => return Err(CoreError::HookNotFound(args.name.clone())),
+        1 => matches[0],
+        _ => return Err(CoreError::HookAmbiguous(args.name.clone())),
+    };
+
+    let ctx = RenderContext { branch: args.current_workspace.clone() };
+    let rendered = render(tmpl, &ctx)?;
+    let mut plan = Plan::new();
+
+    plan.push(Action::RunHook {
+        name: args.name.clone(),
+        rendered_cmd: rendered,
+        cwd: ws.path.clone(),
+        env: hook_env(&args.current_workspace, &ws.path),
+    });
+
+    Ok(plan)
+}
