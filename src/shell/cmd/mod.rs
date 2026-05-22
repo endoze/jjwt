@@ -7,6 +7,7 @@ pub mod list;
 pub mod remove;
 pub mod shell;
 pub mod step_copy_ignored;
+pub mod step_describe;
 pub mod step_diff;
 pub mod step_eval;
 pub mod step_for_each;

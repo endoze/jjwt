@@ -5,6 +5,8 @@ pub mod config_loader;
 pub mod fs;
 pub mod jj;
 pub mod jj_lib;
+pub mod llm;
+pub mod llm_cache;
 pub mod observe;
 pub mod proc;
 pub mod runtime;

@@ -34,6 +34,45 @@ pub fn run(
         row.ci_status = status;
       }
     }
+
+    let summary_enabled = cfg.list.as_ref().and_then(|l| l.summary).unwrap_or(false);
+    let llm_command = cfg
+      .commit
+      .as_ref()
+      .and_then(|c| c.generation.as_ref())
+      .and_then(|g| g.command.as_deref());
+
+    if summary_enabled && let Some(command) = llm_command {
+      let mut cache = crate::shell::llm_cache::load(&obs.repo_root);
+      let mut cache_dirty = false;
+
+      for row in &mut obs.rows {
+        let commit_id = &row.details.commit_short;
+
+        if commit_id.is_empty() {
+          continue;
+        }
+
+        if let Some(cached) = crate::shell::llm_cache::get(&cache, commit_id) {
+          row.summary = cached.to_string();
+          continue;
+        }
+
+        let message = &row.details.message_first_line;
+        let diff_stat =
+          crate::shell::llm::get_jj_diff_stat(&row.workspace.path).unwrap_or_default();
+
+        if let Some(summary) = crate::shell::llm::generate_summary(command, message, &diff_stat) {
+          row.summary = summary.clone();
+          crate::shell::llm_cache::put(&mut cache, commit_id.clone(), summary);
+          cache_dirty = true;
+        }
+      }
+
+      if cache_dirty {
+        let _ = crate::shell::llm_cache::save(&obs.repo_root, &mut cache);
+      }
+    }
   }
 
   // JSON output is machine-readable; never style it. Text output styles

@@ -11,6 +11,7 @@ fn cfg_with_list() -> MergedConfig {
   MergedConfig::from_project(Config {
     list: Some(ListConfig {
       url: "http://example.com/{{ branch }}".into(),
+      summary: None,
     }),
     pre_start: vec![],
     pre_remove: vec![],
@@ -50,6 +51,7 @@ fn obs_with_workspaces() -> ObservedListState {
         behind: 0,
         has_remote_bookmark: false,
         ci_status: CiStatus::None,
+        summary: String::new(),
       },
       ObservedListRow {
         workspace: Workspace {
@@ -62,6 +64,7 @@ fn obs_with_workspaces() -> ObservedListState {
         behind: 1,
         has_remote_bookmark: true,
         ci_status: CiStatus::None,
+        summary: String::new(),
       },
     ],
   }

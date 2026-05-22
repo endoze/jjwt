@@ -100,6 +100,12 @@ enum StepSub {
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
   },
+  /// Generate a commit message with an LLM and set it via `jj describe`.
+  Describe {
+    /// Show the prompt and generated message without applying.
+    #[arg(long)]
+    dry_run: bool,
+  },
   /// Show diff of current workspace against trunk.
   Diff {
     /// Extra arguments forwarded to `jj diff`.
@@ -372,6 +378,7 @@ fn main() -> Result<()> {
         rename_bookmark,
         format.into(),
       ),
+      StepSub::Describe { dry_run } => cmd::step_describe::run(cwd, config, dry_run),
       StepSub::Diff { args } => {
         let code = cmd::step_diff::run(cwd, args)?;
 

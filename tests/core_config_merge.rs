@@ -39,6 +39,7 @@ fn merge_scalars_user_default_when_project_absent() {
     worktree_path_template: Some(".wt/{{ branch }}".into()),
     list: Some(ListConfig {
       url: "http://localhost:{{ branch | hash_port }}".into(),
+      summary: None,
     }),
     ..Default::default()
   };

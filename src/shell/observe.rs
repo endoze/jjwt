@@ -181,6 +181,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
       behind,
       has_remote_bookmark,
       ci_status: CiStatus::None,
+      summary: String::new(),
     });
   }
 

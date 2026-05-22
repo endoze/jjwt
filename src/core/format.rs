@@ -11,7 +11,7 @@ const GUTTER_WIDTH: usize = 2;
 const EMPTY_PENALTY: u8 = 10;
 
 const HEADERS: &[&str] = &[
-  "Branch", "Status", "HEAD±", "main↕", "CI", "Path", "URL", "Commit", "Age", "Message",
+  "Branch", "Status", "HEAD±", "main↕", "CI", "Path", "URL", "Commit", "Age", "Message", "Summary",
 ];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -29,7 +29,7 @@ struct ColSpec {
   truncatable: bool,
 }
 
-const COL_SPECS: [ColSpec; 10] = [
+const COL_SPECS: [ColSpec; 11] = [
   // Branch
   ColSpec {
     priority: 1,
@@ -117,6 +117,15 @@ const COL_SPECS: [ColSpec; 10] = [
     shrinkable: false,
     min_width: Some(10),
     max_width: Some(100),
+    align: Align::Left,
+    truncatable: true,
+  },
+  // Summary (LLM-generated)
+  ColSpec {
+    priority: 6,
+    shrinkable: false,
+    min_width: Some(8),
+    max_width: Some(50),
     align: Align::Left,
     truncatable: true,
   },
@@ -249,7 +258,7 @@ pub fn format_list_table(rows: &[ListRow], styled: bool, term_width: Option<u16>
   out.push(' ');
   out.push(' '); // gutter (1) + separator (1)
 
-  let header_cells: [Cell; 10] = std::array::from_fn(|i| {
+  let header_cells: [Cell; 11] = std::array::from_fn(|i| {
     let h = HEADERS[i].to_string();
 
     if styled {
@@ -276,7 +285,7 @@ pub fn format_list_table(rows: &[ListRow], styled: bool, term_width: Option<u16>
   out
 }
 
-fn push_columns(out: &mut String, cells: &[Cell; 10], widths: &[usize; 10], visible: &[bool; 10]) {
+fn push_columns(out: &mut String, cells: &[Cell; 11], widths: &[usize; 11], visible: &[bool; 11]) {
   let mut first = true;
 
   for (i, cell) in cells.iter().enumerate() {
@@ -289,7 +298,7 @@ fn push_columns(out: &mut String, cells: &[Cell; 10], widths: &[usize; 10], visi
     }
 
     first = false;
-    let is_last_visible = (i + 1..10).all(|j| !visible[j]);
+    let is_last_visible = (i + 1..11).all(|j| !visible[j]);
     let pad = widths[i].saturating_sub(cell.width());
 
     if COL_SPECS[i].align == Align::Right {
@@ -314,11 +323,11 @@ fn push_columns(out: &mut String, cells: &[Cell; 10], widths: &[usize; 10], visi
   }
 }
 
-fn build_cells(rows: &[ListRow], styled: bool) -> Vec<[Cell; 10]> {
+fn build_cells(rows: &[ListRow], styled: bool) -> Vec<[Cell; 11]> {
   rows.iter().map(|r| build_row_cells(r, styled)).collect()
 }
 
-fn build_row_cells(r: &ListRow, styled: bool) -> [Cell; 10] {
+fn build_row_cells(r: &ListRow, styled: bool) -> [Cell; 11] {
   // Worktrunk dims rows that "should dim" (typically non-current). We
   // dim non-current rows' branch/path; commit/age/url/message are always
   // dim (metadata).
@@ -340,6 +349,7 @@ fn build_row_cells(r: &ListRow, styled: bool) -> [Cell; 10] {
     text_cell(&r.commit, dim_if_styled),
     text_cell(&r.age, dim_if_styled),
     text_cell(&r.message, dim_if_styled),
+    text_cell(&r.summary, dim_if_styled),
   ]
 }
 
@@ -353,9 +363,9 @@ fn text_cell(s: &str, style: Option<Style>) -> Cell {
 /// Compute column widths and a visibility mask. When `term_width` is
 /// `None`, every column gets its ideal (natural) width. When `Some`,
 /// columns are dropped by priority, shrunk, and capped to fit.
-fn compute_widths(cells: &[[Cell; 10]], term_width: Option<u16>) -> ([usize; 10], [bool; 10]) {
+fn compute_widths(cells: &[[Cell; 11]], term_width: Option<u16>) -> ([usize; 11], [bool; 11]) {
   // Phase 1: compute ideal (natural) widths — max of header and all cells.
-  let mut ideal = [0usize; 10];
+  let mut ideal = [0usize; 11];
 
   for (i, h) in HEADERS.iter().enumerate() {
     ideal[i] = h.width();
@@ -373,11 +383,11 @@ fn compute_widths(cells: &[[Cell; 10]], term_width: Option<u16>) -> ([usize; 10]
 
   let term_width = match term_width {
     Some(w) => w as usize,
-    None => return (ideal, [true; 10]),
+    None => return (ideal, [true; 11]),
   };
 
   // Phase 2: compute effective priorities (empty columns get a penalty).
-  let mut priorities: [(u8, usize); 10] = std::array::from_fn(|i| {
+  let mut priorities: [(u8, usize); 11] = std::array::from_fn(|i| {
     let base = COL_SPECS[i].priority;
     let all_empty = cells.iter().all(|row| row[i].width() == 0);
 
@@ -394,8 +404,8 @@ fn compute_widths(cells: &[[Cell; 10]], term_width: Option<u16>) -> ([usize; 10]
   priorities.sort_by_key(|&(p, _)| p);
 
   // Phase 3: allocate in priority order.
-  let mut widths = [0usize; 10];
-  let mut visible = [false; 10];
+  let mut widths = [0usize; 11];
+  let mut visible = [false; 11];
   let budget = term_width.saturating_sub(GUTTER_WIDTH);
   let mut remaining = budget;
 
@@ -845,6 +855,14 @@ fn list_row_json(r: &ListRow) -> Value {
     json!({"ahead": r.vs_trunk.ahead, "behind": r.vs_trunk.behind}),
   );
   m.insert("ci_status".into(), Value::String(r.ci_status.to_string()));
+  m.insert(
+    "summary".into(),
+    if r.summary.is_empty() {
+      Value::Null
+    } else {
+      Value::String(r.summary.clone())
+    },
+  );
 
   Value::Object(m)
 }

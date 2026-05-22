@@ -83,6 +83,9 @@ pub struct Config {
   pub aliases: IndexMap<String, String>,
   #[serde(rename = "worktree-path", default)]
   pub worktree_path_template: Option<String>,
+  /// LLM commit-message generation settings.
+  #[serde(default)]
+  pub commit: Option<CommitConfig>,
   /// Per-project overrides in the user config. Keyed by repo identity
   /// (e.g. `github.com/owner/repo`). Only meaningful in user config;
   /// ignored in project config.
@@ -139,6 +142,7 @@ pub struct MergedConfig {
   pub background_remove: Option<bool>,
   pub aliases: IndexMap<String, String>,
   pub worktree_path_template: Option<String>,
+  pub commit: Option<CommitConfig>,
 }
 
 impl MergedConfig {
@@ -154,6 +158,7 @@ impl MergedConfig {
     let list = p.list.or(u.list);
     let background_remove = p.background_remove.or(u.background_remove);
     let worktree_path_template = p.worktree_path_template.or(u.worktree_path_template);
+    let commit = p.commit.or(u.commit);
 
     let mut aliases = u.aliases;
 
@@ -172,6 +177,7 @@ impl MergedConfig {
       background_remove,
       aliases,
       worktree_path_template,
+      commit,
     }
   }
 
@@ -236,6 +242,7 @@ impl MergedConfig {
       background_remove: self.background_remove,
       aliases: self.aliases.clone(),
       worktree_path_template: self.worktree_path_template.clone(),
+      commit: self.commit.clone(),
       projects: HashMap::new(),
     }
   }
@@ -264,6 +271,28 @@ impl MergedConfig {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ListConfig {
   pub url: String,
+  /// Enable LLM-generated one-liner summaries in `list --full`.
+  #[serde(default)]
+  pub summary: Option<bool>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct CommitConfig {
+  pub generation: Option<CommitGenerationConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct CommitGenerationConfig {
+  /// Shell command that reads a prompt from stdin and writes a commit
+  /// message to stdout. Provider-agnostic — any CLI works.
+  pub command: Option<String>,
+  /// Minijinja template for the LLM prompt. When omitted, a built-in
+  /// default is used.
+  pub template: Option<String>,
+  /// Appended to the default template (ignored when `template` is set).
+  /// Intended for project-level guidance in `.config/wt.toml`.
+  #[serde(rename = "template-append")]
+  pub template_append: Option<String>,
 }
 
 pub type HookGroup = IndexMap<String, String>;
@@ -591,6 +620,9 @@ pub struct ObservedListRow {
   /// CI check status from forge CLI (gh/glab). Only populated when
   /// `--full` is used.
   pub ci_status: CiStatus,
+  /// LLM-generated one-liner summary. Only populated when `--full` is
+  /// used and `[list] summary = true`.
+  pub summary: String,
 }
 
 /// State for the prune command: all workspaces with their merge status.
@@ -680,4 +712,6 @@ pub struct ListRow {
   pub message: String,
   /// CI check status from forge CLI.
   pub ci_status: CiStatus,
+  /// LLM-generated one-liner summary.
+  pub summary: String,
 }

@@ -22,6 +22,7 @@ fn row(name: &str) -> ListRow {
     age: "9h".into(),
     message: "msg".into(),
     ci_status: CiStatus::None,
+    summary: String::new(),
   }
 }
 

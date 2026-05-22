@@ -848,6 +848,7 @@ fn build_list_row(
     age: format_age(d.age_seconds),
     message: d.message_first_line.clone(),
     ci_status: obs_row.ci_status,
+    summary: obs_row.summary.clone(),
   })
 }
 
@@ -869,6 +870,7 @@ fn build_branch_row(name: &str) -> ListRow {
     age: String::new(),
     message: String::new(),
     ci_status: CiStatus::None,
+    summary: String::new(),
   }
 }
 
