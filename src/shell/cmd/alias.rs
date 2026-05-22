@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::core::plan::plan_alias;
 use crate::core::types::AliasArgs;
-use crate::shell::config_loader::{find_config, load_config};
+use crate::shell::config_loader::load_merged_config;
 use crate::shell::fs::RealFs;
 use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
@@ -18,9 +18,8 @@ pub fn run(
   name: String,
   forwarded: Vec<String>,
 ) -> Result<()> {
-  let cfg_path =
-    find_config(cwd, config_path).with_context(|| format!("alias '{name}': locate config"))?;
-  let cfg = load_config(&cfg_path)?;
+  let cfg = load_merged_config(cwd, config_path)
+    .with_context(|| format!("alias '{name}': locate config"))?;
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
   let proc = RealProc;

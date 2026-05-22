@@ -13,13 +13,13 @@ fn hook(key: &str, cmd: &str) -> IndexMap<String, String> {
 
 #[test]
 fn show_lists_all_hooks_text() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     pre_start: vec![hook("setup", "npm install")],
     pre_remove: vec![hook("cleanup", "docker stop {{ branch }}")],
     ..Default::default()
-  };
+  });
 
-  let plan = plan_hook_show(&cfg, false, None, OutputFormat::Text).expect("plan ok");
+  let plan = plan_hook_show(&cfg, false, None, OutputFormat::Text, None).expect("plan ok");
 
   assert_eq!(plan.actions.len(), 1);
 
@@ -38,10 +38,10 @@ fn show_lists_all_hooks_text() {
 
 #[test]
 fn show_expanded_renders_templates() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     pre_start: vec![hook("setup", "echo {{ branch }}")],
     ..Default::default()
-  };
+  });
   let obs = ObservedState {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
@@ -54,7 +54,7 @@ fn show_expanded_renders_templates() {
     ..Default::default()
   };
 
-  let plan = plan_hook_show(&cfg, true, Some(&obs), OutputFormat::Text).expect("plan ok");
+  let plan = plan_hook_show(&cfg, true, Some(&obs), OutputFormat::Text, None).expect("plan ok");
 
   let output = match &plan.actions[0] {
     Action::PrintLine(s) => s.clone(),
@@ -66,12 +66,12 @@ fn show_expanded_renders_templates() {
 
 #[test]
 fn show_json_format() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     pre_start: vec![hook("setup", "npm install")],
     ..Default::default()
-  };
+  });
 
-  let plan = plan_hook_show(&cfg, false, None, OutputFormat::Json).expect("plan ok");
+  let plan = plan_hook_show(&cfg, false, None, OutputFormat::Json, None).expect("plan ok");
 
   let output = match &plan.actions[0] {
     Action::PrintLine(s) => s.clone(),
@@ -87,9 +87,9 @@ fn show_json_format() {
 
 #[test]
 fn show_empty_config() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
 
-  let plan = plan_hook_show(&cfg, false, None, OutputFormat::Text).expect("plan ok");
+  let plan = plan_hook_show(&cfg, false, None, OutputFormat::Text, None).expect("plan ok");
 
   let output = match &plan.actions[0] {
     Action::PrintLine(s) => s.clone(),

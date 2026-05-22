@@ -28,7 +28,7 @@ fn make_obs(
 
 #[test]
 fn prunes_merged_workspaces() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = PruneArgs::default();
   let obs = make_obs(
     vec![
@@ -63,7 +63,7 @@ fn prunes_merged_workspaces() {
 
 #[test]
 fn dry_run_emits_only_print() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = PruneArgs {
     dry_run: true,
     ..Default::default()
@@ -97,7 +97,7 @@ fn dry_run_emits_only_print() {
 
 #[test]
 fn nothing_to_prune() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = PruneArgs::default();
   let obs = make_obs(
     vec![("default", "/repo"), ("feat-a", "/repo/.worktrees/feat-a")],
@@ -120,7 +120,7 @@ fn nothing_to_prune() {
 
 #[test]
 fn skips_current_workspace() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = PruneArgs::default();
   let obs = make_obs(
     vec![("default", "/repo"), ("feat-a", "/repo/.worktrees/feat-a")],

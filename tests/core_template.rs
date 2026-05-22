@@ -118,6 +118,7 @@ fn renders_new_template_vars_when_set() {
     hook_type: Some("pre-start".into()),
     hook_name: Some("setup".into()),
     args: vec!["a".into(), "b".into()],
+    vars: vec![],
   };
   let tmpl = "{{ branch }}|{{ worktree_path }}|{{ worktree_name }}|{{ repo }}|{{ repo_path }}|{{ cwd }}|{{ hook_type }}|{{ hook_name }}|{{ args | length }}";
   let out = render(tmpl, &ctx).expect("render ok");

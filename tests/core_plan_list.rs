@@ -7,15 +7,15 @@ const DISPLAY: DisplayHints = DisplayHints {
   term_width: None,
 };
 
-fn cfg_with_list() -> Config {
-  Config {
+fn cfg_with_list() -> MergedConfig {
+  MergedConfig::from_project(Config {
     list: Some(ListConfig {
       url: "http://example.com/{{ branch }}".into(),
     }),
     pre_start: vec![],
     pre_remove: vec![],
     ..Default::default()
-  }
+  })
 }
 
 fn details(commit: &str, msg: &str) -> WorkspaceDetails {
@@ -89,12 +89,12 @@ fn list_renders_url_per_workspace() {
 
 #[test]
 fn list_without_list_config_still_prints_names() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     list: None,
     pre_start: vec![],
     pre_remove: vec![],
     ..Default::default()
-  };
+  });
   let plan =
     plan_list(&cfg, &obs_with_workspaces(), &DISPLAY, OutputFormat::Text).expect("plan ok");
   let Action::PrintLine(out) = &plan.actions[0] else {

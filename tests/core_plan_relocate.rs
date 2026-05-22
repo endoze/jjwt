@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 #[test]
 fn relocate_emits_rename_actions() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = RelocateArgs {
     old_name: "feat-a".into(),
     new_name: "feat-b".into(),
@@ -47,7 +47,7 @@ fn relocate_emits_rename_actions() {
 
 #[test]
 fn relocate_with_bookmark_rename() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = RelocateArgs {
     old_name: "feat-a".into(),
     new_name: "feat-b".into(),
@@ -78,7 +78,7 @@ fn relocate_with_bookmark_rename() {
 
 #[test]
 fn relocate_missing_workspace_errors() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = RelocateArgs {
     old_name: "feat-a".into(),
     new_name: "feat-b".into(),
@@ -99,7 +99,7 @@ fn relocate_missing_workspace_errors() {
 
 #[test]
 fn relocate_conflicting_name_errors() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = RelocateArgs {
     old_name: "feat-a".into(),
     new_name: "feat-b".into(),

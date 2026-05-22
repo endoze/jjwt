@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::core::plan::plan_hook;
 use crate::core::types::HookArgs;
-use crate::shell::config_loader::{find_config, load_config};
+use crate::shell::config_loader::load_merged_config;
 use crate::shell::fs::RealFs;
 use crate::shell::jj::Jj;
 use crate::shell::jj_lib::JjLib;
@@ -11,9 +11,13 @@ use crate::shell::observe::observe;
 use crate::shell::proc::RealProc;
 use crate::shell::runtime::{Runtime, execute};
 
-pub fn run(cwd: &Path, config_path: Option<&Path>, hook_name: String) -> Result<()> {
-  let cfg_path = find_config(cwd, config_path)?;
-  let cfg = load_config(&cfg_path)?;
+pub fn run(
+  cwd: &Path,
+  config_path: Option<&Path>,
+  hook_name: String,
+  vars: Vec<String>,
+) -> Result<()> {
+  let cfg = load_merged_config(cwd, config_path)?;
 
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
@@ -40,9 +44,19 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, hook_name: String) -> Result<
     Some(&current),
     cfg.worktree_path_template.as_deref(),
   )?;
+  let parsed_vars: Vec<(String, String)> = vars
+    .iter()
+    .filter_map(|s| {
+      let (k, v) = s.split_once('=')?;
+
+      Some((k.to_string(), v.to_string()))
+    })
+    .collect();
+
   let args = HookArgs {
     name: hook_name,
     current_workspace: current,
+    vars: parsed_vars,
   };
   let plan = plan_hook(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
 

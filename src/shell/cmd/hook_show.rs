@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::core::plan::plan_hook_show;
 use crate::core::types::OutputFormat;
-use crate::shell::config_loader::{find_config, load_config};
+use crate::shell::config_loader::load_merged_config;
 use crate::shell::fs::RealFs;
 use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
@@ -15,9 +15,9 @@ pub fn run(
   config_path: Option<&Path>,
   expanded: bool,
   format: OutputFormat,
+  source_filter: Option<crate::core::types::HookSource>,
 ) -> Result<()> {
-  let cfg_path = find_config(cwd, config_path)?;
-  let cfg = load_config(&cfg_path)?;
+  let cfg = load_merged_config(cwd, config_path)?;
 
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
@@ -35,8 +35,8 @@ pub fn run(
     None
   };
 
-  let plan =
-    plan_hook_show(&cfg, expanded, obs.as_ref(), format).map_err(|e| anyhow::anyhow!("{e}"))?;
+  let plan = plan_hook_show(&cfg, expanded, obs.as_ref(), format, source_filter)
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
 
   let mut rt = Runtime::new(jj, fs, proc);
 

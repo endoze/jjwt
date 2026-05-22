@@ -83,6 +83,7 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         rendered_cmd,
         cwd,
         env,
+        ..
       } => {
         let out = rt.proc.run_sh(rendered_cmd, cwd, env)?;
 

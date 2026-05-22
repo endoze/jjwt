@@ -13,13 +13,13 @@ fn one_hook(key: &str, cmd: &str) -> IndexMap<String, String> {
 
 #[test]
 fn create_emits_pre_switch_then_workspace_then_pre_post_start_then_print_then_post_switch() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     pre_switch: vec![one_hook("ps", "echo pre-switch {{ branch }}")],
     pre_start: vec![one_hook("p1", "echo pre-start {{ branch }}")],
     post_start: vec![one_hook("p2", "echo post-start {{ branch }}")],
     post_switch: vec![one_hook("pe", "echo post-switch {{ branch }}")],
     ..Default::default()
-  };
+  });
   let args = SwitchArgs {
     name: "feat-x".into(),
     create: true,
@@ -68,18 +68,19 @@ fn create_emits_pre_switch_then_workspace_then_pre_post_start_then_print_then_po
   );
 }
 
-fn cfg_with_two_pre_start_groups() -> Config {
+fn cfg_with_two_pre_start_groups() -> MergedConfig {
   let mut g1 = IndexMap::new();
   g1.insert("direnv".to_string(), "direnv allow .".to_string());
   g1.insert("envrc".to_string(), "echo {{ branch }}".to_string());
   let mut g2 = IndexMap::new();
   g2.insert("db".to_string(), "make db-start".to_string());
-  Config {
+
+  MergedConfig::from_project(Config {
     list: None,
     pre_start: vec![g1, g2],
     pre_remove: vec![],
     ..Default::default()
-  }
+  })
 }
 
 fn observed_clean() -> ObservedState {
@@ -127,6 +128,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     rendered_cmd: c0,
     cwd: cwd0,
     env: env0,
+    ..
   } = &plan.actions[2]
   else {
     panic!("expected RunHook");
@@ -356,10 +358,10 @@ fn switch_trunk_bookmark_name_routes_to_default_workspace() {
 
 #[test]
 fn create_with_custom_worktree_path_template() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     worktree_path_template: Some(".wt/{{ branch }}".into()),
     ..Default::default()
-  };
+  });
   let args = SwitchArgs {
     name: "feat-x".into(),
     create: true,
@@ -383,7 +385,7 @@ fn create_with_custom_worktree_path_template() {
 
 #[test]
 fn create_without_template_uses_default_worktrees_dir() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = SwitchArgs {
     name: "feat-x".into(),
     create: true,
@@ -407,10 +409,10 @@ fn create_without_template_uses_default_worktrees_dir() {
 
 #[test]
 fn create_with_template_using_filters() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     worktree_path_template: Some(".wt/{{ branch | sanitize }}".into()),
     ..Default::default()
-  };
+  });
   let args = SwitchArgs {
     name: "feat/x".into(),
     create: true,

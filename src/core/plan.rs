@@ -26,12 +26,14 @@ fn hook_env(
   ws_path: &Path,
   hook_type: &str,
   hook_name: &str,
+  source: HookSource,
 ) -> Vec<(String, String)> {
   vec![
     ("JJWT_WORKSPACE".into(), workspace.into()),
     ("JJWT_WORKSPACE_PATH".into(), ws_path.display().to_string()),
     ("JJWT_HOOK_TYPE".into(), hook_type.into()),
     ("JJWT_HOOK_NAME".into(), hook_name.into()),
+    ("JJWT_HOOK_SOURCE".into(), source.to_string()),
   ]
 }
 
@@ -59,11 +61,12 @@ fn render_ctx(
     hook_type: Some(hook_type.into()),
     hook_name: Some(hook_name.into()),
     args: Vec::new(),
+    vars: Vec::new(),
   }
 }
 
 fn render_hook_group(
-  groups: &[HookGroup],
+  groups: &[SourcedHookGroup],
   hook_type: &str,
   branch: &str,
   ws_path: &Path,
@@ -71,8 +74,8 @@ fn render_hook_group(
 ) -> Result<Vec<Action>, CoreError> {
   let mut out = Vec::new();
 
-  for group in groups {
-    for (name, tmpl) in group {
+  for shg in groups {
+    for (name, tmpl) in &shg.group {
       let ctx = render_ctx(branch, ws_path, repo_root, hook_type, name);
       let rendered = render(tmpl, &ctx)?;
 
@@ -80,7 +83,8 @@ fn render_hook_group(
         name: name.clone(),
         rendered_cmd: rendered,
         cwd: ws_path.to_path_buf(),
-        env: hook_env(branch, ws_path, hook_type, name),
+        env: hook_env(branch, ws_path, hook_type, name, shg.source),
+        source: shg.source,
       });
     }
   }
@@ -94,7 +98,7 @@ fn render_hook_group(
 /// and `plan_remove`.
 fn render_hook_group_if(
   run: bool,
-  groups: &[HookGroup],
+  groups: &[SourcedHookGroup],
   hook_type: &str,
   branch: &str,
   ws_path: &Path,
@@ -108,7 +112,7 @@ fn render_hook_group_if(
 }
 
 pub fn plan_switch(
-  cfg: &Config,
+  cfg: &MergedConfig,
   args: &SwitchArgs,
   obs: &ObservedState,
 ) -> Result<Plan, CoreError> {
@@ -350,7 +354,7 @@ fn emit_switch_output(
 }
 
 pub fn plan_remove(
-  cfg: &Config,
+  cfg: &MergedConfig,
   args: &RemoveArgs,
   obs: &ObservedState,
 ) -> Result<Plan, CoreError> {
@@ -455,7 +459,11 @@ pub fn plan_remove(
 /// `cfg.aliases`, renders the template with the current observation
 /// context (workspace identity if the cwd is inside one), and emits an
 /// `Exec` action.
-pub fn plan_alias(cfg: &Config, args: &AliasArgs, obs: &ObservedState) -> Result<Plan, CoreError> {
+pub fn plan_alias(
+  cfg: &MergedConfig,
+  args: &AliasArgs,
+  obs: &ObservedState,
+) -> Result<Plan, CoreError> {
   let tmpl = cfg
     .aliases
     .get(&args.name)
@@ -492,6 +500,7 @@ pub fn plan_alias(cfg: &Config, args: &AliasArgs, obs: &ObservedState) -> Result
     hook_type: None,
     hook_name: Some(args.name.clone()),
     args: args.forwarded.clone(),
+    vars: Vec::new(),
   };
   let rendered = render(tmpl, &ctx)?;
   let mut plan = Plan::new();
@@ -505,7 +514,11 @@ pub fn plan_alias(cfg: &Config, args: &AliasArgs, obs: &ObservedState) -> Result
   Ok(plan)
 }
 
-pub fn plan_hook(cfg: &Config, args: &HookArgs, obs: &ObservedState) -> Result<Plan, CoreError> {
+pub fn plan_hook(
+  cfg: &MergedConfig,
+  args: &HookArgs,
+  obs: &ObservedState,
+) -> Result<Plan, CoreError> {
   let ws = obs
     .workspaces
     .iter()
@@ -515,29 +528,31 @@ pub fn plan_hook(cfg: &Config, args: &HookArgs, obs: &ObservedState) -> Result<P
   // Search every configured hook group; remember which one matched so
   // the rendered template can advertise the correct `hook_type` to the
   // user's command.
-  let mut matches: Vec<(&str, &str)> = Vec::new();
+  let mut matches: Vec<(&str, &str, HookSource)> = Vec::new();
 
   for (hook_type, groups) in cfg.all_hook_groups() {
-    for group in groups {
-      if let Some(tmpl) = group.get(&args.name) {
-        matches.push((hook_type, tmpl.as_str()));
+    for shg in groups {
+      if let Some(tmpl) = shg.group.get(&args.name) {
+        matches.push((hook_type, tmpl.as_str(), shg.source));
       }
     }
   }
 
-  let (hook_type, tmpl) = match matches.len() {
+  let (hook_type, tmpl, source) = match matches.len() {
     0 => return Err(CoreError::HookNotFound(args.name.clone())),
     1 => matches[0],
     _ => return Err(CoreError::HookAmbiguous(args.name.clone())),
   };
 
-  let ctx = render_ctx(
+  let mut ctx = render_ctx(
     &args.current_workspace,
     &ws.path,
     &obs.repo_root,
     hook_type,
     &args.name,
   );
+  ctx.vars = args.vars.clone();
+
   let rendered = render(tmpl, &ctx)?;
   let mut plan = Plan::new();
 
@@ -545,14 +560,21 @@ pub fn plan_hook(cfg: &Config, args: &HookArgs, obs: &ObservedState) -> Result<P
     name: args.name.clone(),
     rendered_cmd: rendered,
     cwd: ws.path.clone(),
-    env: hook_env(&args.current_workspace, &ws.path, hook_type, &args.name),
+    env: hook_env(
+      &args.current_workspace,
+      &ws.path,
+      hook_type,
+      &args.name,
+      source,
+    ),
+    source,
   });
 
   Ok(plan)
 }
 
 pub fn plan_relocate(
-  cfg: &Config,
+  cfg: &MergedConfig,
   args: &RelocateArgs,
   obs: &ObservedState,
 ) -> Result<Plan, CoreError> {
@@ -636,7 +658,7 @@ pub fn plan_relocate(
 }
 
 pub fn plan_prune(
-  cfg: &Config,
+  cfg: &MergedConfig,
   args: &PruneArgs,
   obs: &ObservedPruneState,
 ) -> Result<Plan, CoreError> {
@@ -761,7 +783,7 @@ fn trunk_rel(ahead: u32, behind: u32) -> Option<TrunkRel> {
 }
 
 fn build_list_row(
-  cfg: &Config,
+  cfg: &MergedConfig,
   obs_row: &ObservedListRow,
   repo_root: &Path,
   is_current: bool,
@@ -846,7 +868,7 @@ fn build_branch_row(name: &str) -> ListRow {
 }
 
 pub fn plan_list(
-  cfg: &Config,
+  cfg: &MergedConfig,
   obs: &ObservedListState,
   display: &DisplayHints,
   format: OutputFormat,
@@ -886,20 +908,27 @@ pub fn plan_list(
 }
 
 pub fn plan_hook_show(
-  cfg: &Config,
+  cfg: &MergedConfig,
   expanded: bool,
   obs: Option<&ObservedState>,
   format: OutputFormat,
+  source_filter: Option<HookSource>,
 ) -> Result<Plan, CoreError> {
   let mut plan = Plan::new();
 
-  // Gather all hooks across all types.
-  let mut entries: Vec<(&str, &str, &str)> = Vec::new(); // (type, name, template)
+  // Gather all hooks across all types, applying source filter if set.
+  let mut entries: Vec<(&str, &str, &str, HookSource)> = Vec::new();
 
   for (hook_type, groups) in cfg.all_hook_groups() {
-    for group in groups {
-      for (name, tmpl) in group {
-        entries.push((hook_type, name.as_str(), tmpl.as_str()));
+    for shg in groups {
+      if let Some(filter) = source_filter {
+        if shg.source != filter {
+          continue;
+        }
+      }
+
+      for (name, tmpl) in &shg.group {
+        entries.push((hook_type, name.as_str(), tmpl.as_str(), shg.source));
       }
     }
   }
@@ -914,7 +943,7 @@ pub fn plan_hook_show(
     OutputFormat::Json => {
       let items: Vec<serde_json::Value> = entries
         .iter()
-        .map(|(hook_type, name, tmpl)| {
+        .map(|(hook_type, name, tmpl, source)| {
           let mut obj = serde_json::Map::new();
 
           obj.insert(
@@ -922,6 +951,10 @@ pub fn plan_hook_show(
             serde_json::Value::String(hook_type.to_string()),
           );
           obj.insert("name".into(), serde_json::Value::String(name.to_string()));
+          obj.insert(
+            "source".into(),
+            serde_json::Value::String(source.to_string()),
+          );
           obj.insert(
             "template".into(),
             serde_json::Value::String(tmpl.to_string()),
@@ -958,39 +991,46 @@ pub fn plan_hook_show(
       // Compute column widths.
       let type_w = entries
         .iter()
-        .map(|(t, _, _)| t.len())
+        .map(|(t, _, _, _)| t.len())
         .max()
         .unwrap_or(4)
         .max(4);
       let name_w = entries
         .iter()
-        .map(|(_, n, _)| n.len())
+        .map(|(_, n, _, _)| n.len())
         .max()
         .unwrap_or(4)
         .max(4);
+      let source_w = entries
+        .iter()
+        .map(|(_, _, _, s)| s.to_string().len())
+        .max()
+        .unwrap_or(6)
+        .max(6);
 
       // Header.
       if expanded {
         lines.push(format!(
-          "{:<type_w$}  {:<name_w$}  {}",
-          "Type", "Name", "Rendered",
+          "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
+          "Type", "Name", "Source", "Rendered",
         ));
       } else {
         lines.push(format!(
-          "{:<type_w$}  {:<name_w$}  {}",
-          "Type", "Name", "Template",
+          "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
+          "Type", "Name", "Source", "Template",
         ));
       }
 
       // Separator.
       lines.push(format!(
-        "{:<type_w$}  {:<name_w$}  {}",
+        "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
         "-".repeat(type_w),
         "-".repeat(name_w),
+        "-".repeat(source_w),
         "-".repeat(8),
       ));
 
-      for (hook_type, name, tmpl) in &entries {
+      for (hook_type, name, tmpl, source) in &entries {
         let display_val = if expanded {
           if let Some(obs) = obs {
             let (branch, ws_path) = current_workspace_or_root(obs);
@@ -1008,8 +1048,8 @@ pub fn plan_hook_show(
         };
 
         lines.push(format!(
-          "{:<type_w$}  {:<name_w$}  {}",
-          hook_type, name, display_val,
+          "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
+          hook_type, name, source, display_val,
         ));
       }
 

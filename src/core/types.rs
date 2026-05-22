@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use std::fmt;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -99,6 +100,114 @@ impl Config {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookSource {
+  User,
+  Project,
+}
+
+impl fmt::Display for HookSource {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      HookSource::User => f.write_str("user"),
+      HookSource::Project => f.write_str("project"),
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct SourcedHookGroup {
+  pub source: HookSource,
+  pub group: HookGroup,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MergedConfig {
+  pub list: Option<ListConfig>,
+  pub pre_switch: Vec<SourcedHookGroup>,
+  pub post_switch: Vec<SourcedHookGroup>,
+  pub pre_start: Vec<SourcedHookGroup>,
+  pub post_start: Vec<SourcedHookGroup>,
+  pub pre_remove: Vec<SourcedHookGroup>,
+  pub post_remove: Vec<SourcedHookGroup>,
+  pub background_remove: Option<bool>,
+  pub aliases: IndexMap<String, String>,
+  pub worktree_path_template: Option<String>,
+}
+
+impl MergedConfig {
+  /// Merge a user config (defaults) and a project config (overrides) into a
+  /// single `MergedConfig`. Matches worktrunk's layering semantics:
+  /// - Scalars: project wins if present, else user.
+  /// - Aliases: user entries as base, project entries override per-key.
+  /// - Hooks: user hooks first, project hooks appended (both contribute).
+  pub fn from_layers(user: Option<&Config>, project: Option<&Config>) -> Self {
+    let u = user.cloned().unwrap_or_default();
+    let p = project.cloned().unwrap_or_default();
+
+    let list = p.list.or(u.list);
+    let background_remove = p.background_remove.or(u.background_remove);
+    let worktree_path_template = p.worktree_path_template.or(u.worktree_path_template);
+
+    let mut aliases = u.aliases;
+
+    for (k, v) in p.aliases {
+      aliases.insert(k, v);
+    }
+
+    Self {
+      list,
+      pre_switch: Self::merge_hooks(&u.pre_switch, &p.pre_switch),
+      post_switch: Self::merge_hooks(&u.post_switch, &p.post_switch),
+      pre_start: Self::merge_hooks(&u.pre_start, &p.pre_start),
+      post_start: Self::merge_hooks(&u.post_start, &p.post_start),
+      pre_remove: Self::merge_hooks(&u.pre_remove, &p.pre_remove),
+      post_remove: Self::merge_hooks(&u.post_remove, &p.post_remove),
+      background_remove,
+      aliases,
+      worktree_path_template,
+    }
+  }
+
+  /// Wrap a single `Config` as all-`Project`-sourced. Convenience for
+  /// callers that don't need layering (and for migrating existing tests).
+  pub fn from_project(cfg: Config) -> Self {
+    Self::from_layers(None, Some(&cfg))
+  }
+
+  /// Iterate (hook_type, groups) pairs over every configured hook group.
+  pub fn all_hook_groups(&self) -> Vec<(&'static str, &[SourcedHookGroup])> {
+    vec![
+      ("pre-switch", self.pre_switch.as_slice()),
+      ("post-switch", self.post_switch.as_slice()),
+      ("pre-start", self.pre_start.as_slice()),
+      ("post-start", self.post_start.as_slice()),
+      ("pre-remove", self.pre_remove.as_slice()),
+      ("post-remove", self.post_remove.as_slice()),
+    ]
+  }
+
+  fn merge_hooks(user: &[HookGroup], project: &[HookGroup]) -> Vec<SourcedHookGroup> {
+    let mut out = Vec::with_capacity(user.len() + project.len());
+
+    for g in user {
+      out.push(SourcedHookGroup {
+        source: HookSource::User,
+        group: g.clone(),
+      });
+    }
+
+    for g in project {
+      out.push(SourcedHookGroup {
+        source: HookSource::Project,
+        group: g.clone(),
+      });
+    }
+
+    out
+  }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ListConfig {
   pub url: String,
@@ -128,6 +237,8 @@ pub struct RenderContext {
   /// Tokens forwarded from the CLI to a manually-invoked hook
   /// (`jjwt hook <type> -- <args>`).
   pub args: Vec<String>,
+  /// Extra variables from `--var KEY=VAL`.
+  pub vars: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +312,7 @@ pub enum Action {
     rendered_cmd: String,
     cwd: PathBuf,
     env: Vec<(String, String)>,
+    source: HookSource,
   },
   /// Run a command with stdio inherited from the parent process. Used by
   /// `jjwt <alias>` and (in 1B.17) `jjwt switch -x`. A non-zero exit
@@ -278,6 +390,8 @@ pub struct RemoveArgs {
 pub struct HookArgs {
   pub name: String,
   pub current_workspace: String,
+  /// Extra template variables from `--var KEY=VAL`.
+  pub vars: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]

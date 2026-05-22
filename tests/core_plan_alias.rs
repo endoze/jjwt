@@ -3,17 +3,17 @@ use jjwt::core::plan::plan_alias;
 use jjwt::core::types::*;
 use std::path::PathBuf;
 
-fn cfg_with(aliases: &[(&str, &str)]) -> Config {
+fn cfg_with(aliases: &[(&str, &str)]) -> MergedConfig {
   let mut a = IndexMap::new();
 
   for (k, v) in aliases {
     a.insert((*k).into(), (*v).into());
   }
 
-  Config {
+  MergedConfig::from_project(Config {
     aliases: a,
     ..Default::default()
-  }
+  })
 }
 
 fn obs_inside(name: &str) -> ObservedState {

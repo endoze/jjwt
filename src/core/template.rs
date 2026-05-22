@@ -45,39 +45,43 @@ pub fn render(template: &str, ctx: &RenderContext) -> Result<String, CoreError> 
   let tmpl = env
     .template_from_str(template)
     .map_err(|e| CoreError::TemplateRender(e.to_string()))?;
-  let mut data = std::collections::BTreeMap::<&'static str, Value>::new();
+  let mut data = std::collections::BTreeMap::<String, Value>::new();
 
-  data.insert("branch", Value::from(ctx.branch.clone()));
+  data.insert("branch".into(), Value::from(ctx.branch.clone()));
 
   if let Some(p) = ctx.worktree_path.as_ref() {
-    data.insert("worktree_path", Value::from(p.display().to_string()));
+    data.insert("worktree_path".into(), Value::from(p.display().to_string()));
   }
 
   if let Some(n) = ctx.worktree_name.as_ref() {
-    data.insert("worktree_name", Value::from(n.clone()));
+    data.insert("worktree_name".into(), Value::from(n.clone()));
   }
 
   if let Some(r) = ctx.repo.as_ref() {
-    data.insert("repo", Value::from(r.clone()));
+    data.insert("repo".into(), Value::from(r.clone()));
   }
 
   if let Some(p) = ctx.repo_path.as_ref() {
-    data.insert("repo_path", Value::from(p.display().to_string()));
+    data.insert("repo_path".into(), Value::from(p.display().to_string()));
   }
 
   if let Some(p) = ctx.cwd.as_ref() {
-    data.insert("cwd", Value::from(p.display().to_string()));
+    data.insert("cwd".into(), Value::from(p.display().to_string()));
   }
 
   if let Some(t) = ctx.hook_type.as_ref() {
-    data.insert("hook_type", Value::from(t.clone()));
+    data.insert("hook_type".into(), Value::from(t.clone()));
   }
 
   if let Some(n) = ctx.hook_name.as_ref() {
-    data.insert("hook_name", Value::from(n.clone()));
+    data.insert("hook_name".into(), Value::from(n.clone()));
   }
 
-  data.insert("args", Value::from(ctx.args.clone()));
+  data.insert("args".into(), Value::from(ctx.args.clone()));
+
+  for (k, v) in &ctx.vars {
+    data.insert(k.clone(), Value::from(v.clone()));
+  }
 
   tmpl
     .render(data)

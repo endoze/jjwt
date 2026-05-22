@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::core::plan::plan_list;
 use crate::core::types::{DisplayHints, ListOptions, OutputFormat};
-use crate::shell::config_loader::{find_config, load_config};
+use crate::shell::config_loader::load_merged_config;
 use crate::shell::fs::RealFs;
 use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe_list;
@@ -17,8 +17,7 @@ pub fn run(
   opts: ListOptions,
   format: OutputFormat,
 ) -> Result<()> {
-  let cfg_path = find_config(cwd, config_path)?;
-  let cfg = load_config(&cfg_path)?;
+  let cfg = load_merged_config(cwd, config_path)?;
 
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;

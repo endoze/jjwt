@@ -13,11 +13,11 @@ fn hook(key: &str, cmd: &str) -> IndexMap<String, String> {
 
 #[test]
 fn remove_emits_pre_remove_then_actions_then_post_remove() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     pre_remove: vec![hook("a", "echo pre-remove {{ branch }}")],
     post_remove: vec![hook("b", "echo post-remove {{ branch }}")],
     ..Default::default()
-  };
+  });
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: true,
@@ -68,7 +68,7 @@ fn remove_emits_pre_remove_then_actions_then_post_remove() {
 
 #[test]
 fn no_delete_branch_keeps_bookmark_even_when_merged() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
     name: "feat-x".into(),
     no_delete_branch: true,
@@ -98,7 +98,7 @@ fn no_delete_branch_keeps_bookmark_even_when_merged() {
 
 #[test]
 fn force_delete_removes_unmerged_bookmark() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
     name: "feat-x".into(),
     force_delete: true,
@@ -126,16 +126,17 @@ fn force_delete_removes_unmerged_bookmark() {
   );
 }
 
-fn cfg() -> Config {
+fn cfg() -> MergedConfig {
   let mut g = IndexMap::new();
   g.insert("db_stop".to_string(), "make db-stop".to_string());
   g.insert("teardown".to_string(), "echo bye {{ branch }}".to_string());
-  Config {
+
+  MergedConfig::from_project(Config {
     list: None,
     pre_start: vec![],
     pre_remove: vec![g],
     ..Default::default()
-  }
+  })
 }
 
 fn obs_existing(name: &str, dirty: bool, merged: bool, bookmark_exists: bool) -> ObservedState {
@@ -349,10 +350,10 @@ fn remove_no_bookmark_skips_delete() {
 
 #[test]
 fn background_remove_emits_delete_dir_background() {
-  let cfg = Config {
+  let cfg = MergedConfig::from_project(Config {
     background_remove: Some(true),
     ..Default::default()
-  };
+  });
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: true,
@@ -388,7 +389,7 @@ fn background_remove_emits_delete_dir_background() {
 
 #[test]
 fn sync_remove_when_background_not_configured() {
-  let cfg = Config::default();
+  let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: true,

@@ -3,7 +3,7 @@ use jjwt::core::plan::plan_hook;
 use jjwt::core::types::*;
 use std::path::PathBuf;
 
-fn cfg_with_hooks() -> Config {
+fn cfg_with_hooks() -> MergedConfig {
   let mut g1 = IndexMap::new();
   g1.insert("direnv".to_string(), "direnv allow .".to_string());
   let mut g2 = IndexMap::new();
@@ -13,12 +13,13 @@ fn cfg_with_hooks() -> Config {
   );
   let mut g3 = IndexMap::new();
   g3.insert("db_stop".to_string(), "make db-stop".to_string());
-  Config {
+
+  MergedConfig::from_project(Config {
     list: None,
     pre_start: vec![g1, g2],
     pre_remove: vec![g3],
     ..Default::default()
-  }
+  })
 }
 
 fn obs() -> ObservedState {
@@ -42,6 +43,7 @@ fn obs() -> ObservedState {
 fn resolves_hook_from_pre_start() {
   let cfg = cfg_with_hooks();
   let args = HookArgs {
+    vars: vec![],
     name: "db".into(),
     current_workspace: "feat-x".into(),
   };
@@ -52,6 +54,7 @@ fn resolves_hook_from_pre_start() {
     rendered_cmd,
     cwd,
     env,
+    ..
   } = &plan.actions[0]
   else {
     panic!()
@@ -70,6 +73,7 @@ fn resolves_hook_from_pre_start() {
 fn resolves_hook_from_pre_remove() {
   let cfg = cfg_with_hooks();
   let args = HookArgs {
+    vars: vec![],
     name: "db_stop".into(),
     current_workspace: "feat-x".into(),
   };
@@ -84,6 +88,7 @@ fn resolves_hook_from_pre_remove() {
 fn missing_hook_errors() {
   let cfg = cfg_with_hooks();
   let args = HookArgs {
+    vars: vec![],
     name: "nope".into(),
     current_workspace: "feat-x".into(),
   };
@@ -96,9 +101,14 @@ fn ambiguous_hook_errors() {
   let mut cfg = cfg_with_hooks();
   let mut dup = IndexMap::new();
   dup.insert("db".to_string(), "different".to_string());
-  cfg.pre_remove.push(dup);
+
+  cfg.pre_remove.push(SourcedHookGroup {
+    source: HookSource::Project,
+    group: dup,
+  });
 
   let args = HookArgs {
+    vars: vec![],
     name: "db".into(),
     current_workspace: "feat-x".into(),
   };
@@ -110,6 +120,7 @@ fn ambiguous_hook_errors() {
 fn missing_current_workspace_errors() {
   let cfg = cfg_with_hooks();
   let args = HookArgs {
+    vars: vec![],
     name: "db".into(),
     current_workspace: "nope".into(),
   };

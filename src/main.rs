@@ -173,6 +173,12 @@ struct ListCmd {
   format: OutputFormat,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum HookSourceArg {
+  User,
+  Project,
+}
+
 #[derive(Args)]
 struct HookCmd {
   /// Hook name to run. Omit to use --show.
@@ -183,6 +189,12 @@ struct HookCmd {
   /// Render templates with current workspace context (requires --show).
   #[arg(long, requires = "show")]
   expanded: bool,
+  /// Filter hooks by config source (requires --show).
+  #[arg(long, value_enum, requires = "show")]
+  source: Option<HookSourceArg>,
+  /// Set a template variable for hook rendering (repeatable).
+  #[arg(long = "var", value_name = "KEY=VAL")]
+  vars: Vec<String>,
   /// Output format: `text` (default) or `json`.
   #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
   format: OutputFormat,
@@ -206,6 +218,9 @@ struct ConfigCreateCmd {
   /// Write a project config at `.config/wt.toml`.
   #[arg(long)]
   project: bool,
+  /// Write a user config at `~/.config/jjwt/config.toml`.
+  #[arg(long)]
+  user: bool,
 }
 
 #[derive(Args)]
@@ -271,20 +286,25 @@ fn main() -> Result<()> {
     ),
     Cmd::Hook(h) => {
       if h.show {
-        cmd::hook_show::run(cwd, config, h.expanded, h.format.into())
+        let source_filter = h.source.map(|s| match s {
+          HookSourceArg::User => jjwt::core::types::HookSource::User,
+          HookSourceArg::Project => jjwt::core::types::HookSource::Project,
+        });
+
+        cmd::hook_show::run(cwd, config, h.expanded, h.format.into(), source_filter)
       } else {
         let name = h
           .name
           .ok_or_else(|| anyhow::anyhow!("hook name required (or use --show)"))?;
 
-        cmd::hook::run(cwd, config, name)
+        cmd::hook::run(cwd, config, name, h.vars)
       }
     }
     Cmd::Config(c) => match c.sub {
       ConfigSub::Shell(s) => match s.sub {
         ConfigShellSub::Init(i) => cmd::shell::dispatch(&i.shell),
       },
-      ConfigSub::Create(c) => cmd::config_create::run(cwd, c.project),
+      ConfigSub::Create(c) => cmd::config_create::run(cwd, c.project, c.user),
       ConfigSub::Show => cmd::config_show::run(cwd, config),
     },
     Cmd::Step(s) => match s.sub {
