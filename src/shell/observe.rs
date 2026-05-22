@@ -214,7 +214,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
   })
 }
 
-pub fn observe_prune<J: Jj, F: Fs>(
+pub fn observe_prune<J: Jj + Sync, F: Fs>(
   jj: &J,
   _fs: &F,
   start_dir: &Path,
@@ -236,19 +236,34 @@ pub fn observe_prune<J: Jj, F: Fs>(
   let cwd_canon = std::fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
   let current_workspace = pick_current_workspace(&cwd_canon, &workspaces);
 
-  let mut workspace_status = Vec::with_capacity(workspaces.len());
+  // Per-workspace prune queries in parallel (mirrors observe_list pattern).
+  let workspace_status = std::thread::scope(|s| {
+    let repo = &repo_root;
 
-  for w in &workspaces {
-    let bm_exists = jj.bookmark_exists(&repo_root, &w.name)?;
-    let bm_merged = if bm_exists {
-      jj.bookmark_is_merged_into_trunk(&repo_root, &w.name)?
-    } else {
-      false
-    };
-    let dirty = jj.workspace_is_dirty(&repo_root, &w.name)?;
+    let handles: Vec<_> = workspaces
+      .iter()
+      .map(|w| {
+        s.spawn(move || {
+          let bm_exists = jj.bookmark_exists(repo, &w.name)?;
 
-    workspace_status.push((w.name.clone(), bm_exists, bm_merged, dirty));
-  }
+          let bm_merged = if bm_exists {
+            jj.bookmark_is_merged_into_trunk(repo, &w.name)?
+          } else {
+            false
+          };
+
+          let dirty = jj.workspace_is_dirty(repo, &w.name)?;
+
+          Ok::<_, anyhow::Error>((w.name.clone(), bm_exists, bm_merged, dirty))
+        })
+      })
+      .collect();
+
+    handles
+      .into_iter()
+      .map(|h| h.join().unwrap())
+      .collect::<Result<Vec<_>>>()
+  })?;
 
   Ok(ObservedPruneState {
     repo_root,
