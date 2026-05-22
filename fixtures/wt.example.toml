@@ -1,0 +1,44 @@
+# Project configuration for jjwt.
+#
+# `jjwt` reads this file from `.config/wt.toml` and manages a jujutsu
+# workspace per branch in `.worktrees/<name>/`. The file is intentionally
+# worktrunk-compatible: the same template variables and filters are
+# accepted, so the same hooks can drive both tools.
+#
+# Run `jjwt config show` to see the parsed contents.
+
+# Dev-server URL surfaced by `jjwt list`. Optional.
+#
+# [list]
+# url = "http://localhost:{{ branch | hash_port }}"
+
+# Hooks run at lifecycle events. Three shapes are accepted:
+#
+#   pre-start = "npm install"               # one anonymous command
+#
+#   [pre-start]
+#   install = "npm ci"                       # one or more named commands
+#   build = "npm run build"
+#
+#   [[pre-start]]                            # pipeline: each `[[...]]` block
+#   install = "npm ci"                       # runs as a separate step.
+#
+#   [[pre-start]]
+#   build = "npm run build"
+#
+# Available template variables: branch, worktree_path, worktree_name,
+# repo, repo_path, cwd, hook_type, hook_name, args.
+#
+# Available filters: sanitize, sanitize_db, sanitize_hash, hash, hash_port,
+# dirname, basename, codename(n).
+
+# [[pre-start]]
+# envrc = """
+# cat > .envrc.local <<ENVRC
+# export APP_PORT={{ ('app-' ~ branch) | hash_port }}
+# ENVRC
+# """
+# direnv = "direnv allow ."
+
+# [[pre-remove]]
+# stop = "docker stop {{ branch | sanitize }}-db 2>/dev/null || true"

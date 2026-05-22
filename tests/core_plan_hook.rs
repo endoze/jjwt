@@ -17,6 +17,7 @@ fn cfg_with_hooks() -> Config {
     list: None,
     pre_start: vec![g1, g2],
     pre_remove: vec![g3],
+    ..Default::default()
   }
 }
 
@@ -33,7 +34,7 @@ fn obs() -> ObservedState {
     target_workspace_dirty: false,
     target_bookmark_merged: true,
     target_bookmark_exists: true,
-    target_resolved_workspace: None,
+    ..Default::default()
   }
 }
 

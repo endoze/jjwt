@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::core::types::{ObservedListRow, ObservedListState, ObservedState};
+use crate::core::types::{ObservedListRow, ObservedListState, ObservedState, WorkspaceDetails};
 use crate::shell::fs::Fs;
 use crate::shell::jj::Jj;
 
@@ -18,6 +18,7 @@ pub fn observe<J: Jj, F: Fs>(
         repo_root: start_dir.to_path_buf(),
         is_jj_repo: false,
         workspaces: vec![],
+        current_workspace: None,
         target_path_exists: false,
         target_workspace_dirty: false,
         target_bookmark_merged: false,
@@ -28,6 +29,8 @@ pub fn observe<J: Jj, F: Fs>(
   };
 
   let workspaces = jj.workspace_list(&repo_root)?;
+  let cwd_canon = std::fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
+  let current_workspace = pick_current_workspace(&cwd_canon, &workspaces);
 
   let mut target_path_exists = false;
   let mut target_workspace_dirty = false;
@@ -57,6 +60,7 @@ pub fn observe<J: Jj, F: Fs>(
     repo_root,
     is_jj_repo: true,
     workspaces,
+    current_workspace,
     target_path_exists,
     target_workspace_dirty,
     target_bookmark_merged,
@@ -67,15 +71,26 @@ pub fn observe<J: Jj, F: Fs>(
 
 /// Gather everything needed for `jjwt list`. One pass; sequential per-workspace
 /// `jj` calls. For typical workspace counts (N ≤ ~10) the latency is fine.
-pub fn observe_list<J: Jj, F: Fs>(jj: &J, _fs: &F, start_dir: &Path) -> Result<ObservedListState> {
+///
+/// `opts.include_branches` triggers a `jj bookmark list` to collect names
+/// of local bookmarks that don't have a corresponding workspace.
+/// `opts.include_remotes` collects remote-only bookmarks (local doesn't
+/// exist; we already know `bookmarks_with_remote()` returns the local
+/// names that do have a remote variant — the *remote-only* set is the
+/// difference of `--all-remotes` ∖ `local`).
+pub fn observe_list<J: Jj + Sync, F: Fs>(
+  jj: &J,
+  _fs: &F,
+  start_dir: &Path,
+  opts: crate::core::types::ListOptions,
+) -> Result<ObservedListState> {
   let repo_root = match jj.repo_root(start_dir) {
     Ok(r) => r,
     Err(_) => {
       return Ok(ObservedListState {
         repo_root: start_dir.to_path_buf(),
         is_jj_repo: false,
-        current_workspace: None,
-        rows: vec![],
+        ..Default::default()
       });
     }
   };
@@ -84,28 +99,104 @@ pub fn observe_list<J: Jj, F: Fs>(jj: &J, _fs: &F, start_dir: &Path) -> Result<O
   let cwd_canon = std::fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
 
   let current_workspace = pick_current_workspace(&cwd_canon, &workspaces);
-  let remote_set = jj.bookmarks_with_remote(&repo_root).unwrap_or_default();
+  let ws_names: Vec<String> = workspaces.iter().map(|w| w.name.clone()).collect();
+
+  // Run three independent batch queries in parallel:
+  // 1. bookmark_sets (one jj call)
+  // 2. workspace_commit_info_batch (one jj call — commit metadata + diff stats + conflicts)
+  // 3. workspace_ahead_behind_batch (two jj calls — ahead + behind)
+  // Plus per-workspace status queries (one jj call each, for modified/untracked).
+  let (bookmark_result, commit_result, ahead_behind_result, status_results) =
+    std::thread::scope(|s| {
+      let repo = &repo_root;
+      let names = &ws_names;
+
+      let bm_handle = s.spawn(move || jj.bookmark_sets(repo));
+      let ci_handle = s.spawn(move || jj.workspace_commit_info_batch(repo, names));
+      let ab_handle = s.spawn(move || jj.workspace_ahead_behind_batch(repo, names));
+
+      // Per-workspace status queries in parallel.
+      let status_handles: Vec<_> = workspaces
+        .iter()
+        .map(|w| s.spawn(move || (w.name.clone(), jj.workspace_status(repo, &w.name))))
+        .collect();
+
+      let status_results: Vec<_> = status_handles
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .collect();
+
+      (
+        bm_handle.join().unwrap(),
+        ci_handle.join().unwrap(),
+        ab_handle.join().unwrap(),
+        status_results,
+      )
+    });
+
+  let (all_local, remote_set) = bookmark_result.unwrap_or_default();
+  let commit_infos = commit_result?;
+  let ahead_behinds = ahead_behind_result?;
+
   let mut rows = Vec::with_capacity(workspaces.len());
 
-  for w in &workspaces {
-    let details = jj.workspace_details(&repo_root, &w.name)?;
-    let (ahead, behind) = jj.workspace_ahead_behind_trunk(&repo_root, &w.name)?;
+  for (i, w) in workspaces.iter().enumerate() {
+    let ci = commit_infos.get(&w.name).cloned().unwrap_or_default();
+    let (ahead, behind) = ahead_behinds.get(&w.name).copied().unwrap_or((0, 0));
+    let (modified, untracked) = match &status_results[i].1 {
+      Ok(s) => *s,
+      Err(_) => (false, false),
+    };
     let has_remote_bookmark = remote_set.contains(&w.name);
 
     rows.push(ObservedListRow {
       workspace: w.clone(),
-      details,
+      details: WorkspaceDetails {
+        modified,
+        untracked,
+        conflicts: ci.conflicts,
+        commit_short: ci.commit_short,
+        age_seconds: ci.age_seconds,
+        message_first_line: ci.message_first_line,
+        head_added: ci.head_added,
+        head_removed: ci.head_removed,
+      },
       ahead,
       behind,
       has_remote_bookmark,
     });
   }
 
+  let ws_name_set: std::collections::HashSet<&str> =
+    workspaces.iter().map(|w| w.name.as_str()).collect();
+  let extra_branch_names = if opts.include_branches {
+    all_local
+      .iter()
+      .filter(|n| !ws_name_set.contains(n.as_str()))
+      .cloned()
+      .collect()
+  } else {
+    Vec::new()
+  };
+  let extra_remote_only_names = if opts.include_remotes {
+    let local_set: std::collections::HashSet<&str> = all_local.iter().map(|s| s.as_str()).collect();
+
+    remote_set
+      .iter()
+      .filter(|n| !local_set.contains(n.as_str()))
+      .cloned()
+      .collect()
+  } else {
+    Vec::new()
+  };
+
   Ok(ObservedListState {
     repo_root,
     is_jj_repo: true,
     current_workspace,
     rows,
+    extra_branch_names,
+    extra_remote_only_names,
   })
 }
 

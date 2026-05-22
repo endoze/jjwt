@@ -1,5 +1,11 @@
+pub mod alias;
+pub mod config_create;
+pub mod config_show;
 pub mod hook;
 pub mod list;
 pub mod remove;
 pub mod shell;
+pub mod step_eval;
+pub mod step_for_each;
+pub mod step_tether;
 pub mod switch;

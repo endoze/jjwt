@@ -14,6 +14,12 @@ pub enum CoreError {
   HookAmbiguous(String),
   #[error("workspace '{0}' already exists")]
   WorkspaceExists(String),
+  #[error(
+    "path '{0}' already exists at the target workspace location (use --clobber to remove it)"
+  )]
+  TargetPathOccupied(String),
+  #[error("path '{0}' is inside another workspace and cannot be clobbered")]
+  TargetPathInsideOtherWorkspace(String),
   #[error("workspace '{0}' does not exist")]
   WorkspaceMissing(String),
   #[error("workspace '{0}' has uncommitted changes (use --force)")]
@@ -22,16 +28,71 @@ pub enum CoreError {
   BookmarkUnmerged(String),
   #[error("not inside a jj repo")]
   NotJjRepo,
+  #[error("alias '{0}' not found in config")]
+  AliasNotFound(String),
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct Config {
   #[serde(default)]
   pub list: Option<ListConfig>,
-  #[serde(rename = "pre-start", default)]
+  #[serde(
+    rename = "pre-switch",
+    default,
+    deserialize_with = "crate::core::config::deserialize_hook_groups"
+  )]
+  pub pre_switch: Vec<HookGroup>,
+  #[serde(
+    rename = "post-switch",
+    default,
+    deserialize_with = "crate::core::config::deserialize_hook_groups"
+  )]
+  pub post_switch: Vec<HookGroup>,
+  #[serde(
+    rename = "pre-start",
+    default,
+    deserialize_with = "crate::core::config::deserialize_hook_groups"
+  )]
   pub pre_start: Vec<HookGroup>,
-  #[serde(rename = "pre-remove", default)]
+  #[serde(
+    rename = "post-start",
+    default,
+    deserialize_with = "crate::core::config::deserialize_hook_groups"
+  )]
+  pub post_start: Vec<HookGroup>,
+  #[serde(
+    rename = "pre-remove",
+    default,
+    deserialize_with = "crate::core::config::deserialize_hook_groups"
+  )]
   pub pre_remove: Vec<HookGroup>,
+  #[serde(
+    rename = "post-remove",
+    default,
+    deserialize_with = "crate::core::config::deserialize_hook_groups"
+  )]
+  pub post_remove: Vec<HookGroup>,
+  /// Custom subcommands. Each entry maps `jjwt <name>` to a template
+  /// rendered with the standard hook variables; the result is executed
+  /// via `sh -c` with stdio inherited from the parent process.
+  #[serde(default)]
+  pub aliases: IndexMap<String, String>,
+}
+
+impl Config {
+  /// Iterate (hook_type, group) pairs over every configured hook group.
+  /// Used by `jjwt hook` for cross-group lookups and (in 1B.13)
+  /// `hook show`.
+  pub fn all_hook_groups(&self) -> Vec<(&'static str, &[HookGroup])> {
+    vec![
+      ("pre-switch", self.pre_switch.as_slice()),
+      ("post-switch", self.post_switch.as_slice()),
+      ("pre-start", self.pre_start.as_slice()),
+      ("post-start", self.post_start.as_slice()),
+      ("pre-remove", self.pre_remove.as_slice()),
+      ("post-remove", self.post_remove.as_slice()),
+    ]
+  }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -41,9 +102,28 @@ pub struct ListConfig {
 
 pub type HookGroup = IndexMap<String, String>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RenderContext {
+  /// Branch/workspace name the operation targets.
   pub branch: String,
+  /// Absolute path of the workspace this template is being rendered for.
+  pub worktree_path: Option<PathBuf>,
+  /// Workspace directory name (`basename(worktree_path)` when present).
+  pub worktree_name: Option<String>,
+  /// Repository root directory name.
+  pub repo: Option<String>,
+  /// Absolute path of the repository root.
+  pub repo_path: Option<PathBuf>,
+  /// Directory the hook command will run in (often the same as
+  /// `worktree_path`; differs for some hook types we don't yet emit).
+  pub cwd: Option<PathBuf>,
+  /// Hook type being rendered, e.g. `pre-start`.
+  pub hook_type: Option<String>,
+  /// Named key of the hook command inside its group.
+  pub hook_name: Option<String>,
+  /// Tokens forwarded from the CLI to a manually-invoked hook
+  /// (`jjwt hook <type> -- <args>`).
+  pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,11 +133,13 @@ pub struct Workspace {
   pub stale: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ObservedState {
   pub repo_root: PathBuf,
   pub is_jj_repo: bool,
   pub workspaces: Vec<Workspace>,
+  /// Workspace whose path contains cwd (deepest match), if any.
+  pub current_workspace: Option<String>,
   /// Whether the target workspace path already exists on disk (for switch --create).
   pub target_path_exists: bool,
   /// `jj status` output non-empty for the target workspace (for remove).
@@ -101,6 +183,14 @@ pub enum Action {
     cwd: PathBuf,
     env: Vec<(String, String)>,
   },
+  /// Run a command with stdio inherited from the parent process. Used by
+  /// `jjwt <alias>` and (in 1B.17) `jjwt switch -x`. A non-zero exit
+  /// becomes an error so the surrounding plan halts.
+  Exec {
+    rendered_cmd: String,
+    cwd: PathBuf,
+    env: Vec<(String, String)>,
+  },
   PrintLine(String),
 }
 
@@ -118,23 +208,64 @@ impl Plan {
   }
 }
 
-#[derive(Debug, Clone)]
+/// Output format negotiated by `--format`. Text is the default; JSON is
+/// emitted as a single line on the same `PrintLine` action so the runtime
+/// is oblivious to the format choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputFormat {
+  #[default]
+  Text,
+  Json,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct SwitchArgs {
   pub name: String,
   pub create: bool,
   pub rerun_hooks: bool,
+  /// Skip all hooks for this invocation. Set by `--no-hooks`
+  /// (and the deprecated `--no-verify` alias).
+  pub no_hooks: bool,
+  /// Optional command template to run after switching. Equivalent to
+  /// worktrunk's `-x`. The template is expanded with the standard hook
+  /// variables; the rendered command is emitted to the shell wrapper as
+  /// an `exec:` directive.
+  pub execute: Option<String>,
+  /// Remove a stale directory at the target workspace path before
+  /// creating the workspace. Worktrunk's `--clobber`. Refused when the
+  /// stale path lives inside another registered workspace.
+  pub clobber: bool,
+  pub format: OutputFormat,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RemoveArgs {
   pub name: String,
+  /// Force worktree removal: bypass the "uncommitted changes" check.
+  /// Worktrunk's `-f`.
   pub force: bool,
+  /// Skip all hooks for this invocation.
+  pub no_hooks: bool,
+  /// Never delete the bookmark, even if it is merged into trunk.
+  /// Worktrunk's `--no-delete-branch`.
+  pub no_delete_branch: bool,
+  /// Delete the bookmark even when not merged into trunk. Worktrunk's
+  /// `-D` / `--force-delete`.
+  pub force_delete: bool,
+  pub format: OutputFormat,
 }
 
 #[derive(Debug, Clone)]
 pub struct HookArgs {
   pub name: String,
   pub current_workspace: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AliasArgs {
+  pub name: String,
+  /// Tokens forwarded from the CLI; bound to `{{ args }}` in the template.
+  pub forwarded: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,6 +315,25 @@ pub struct AheadBehind {
   pub behind: u32,
 }
 
+/// Commit metadata and diff stats for a workspace's `@`, gathered in batch
+/// via a single `jj log` call across all workspaces. Includes fields that
+/// previously required separate `jj status` and `jj diff --stat` calls.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CommitInfo {
+  /// Short change ID (8 chars).
+  pub commit_short: String,
+  /// Seconds since `@`'s committer timestamp.
+  pub age_seconds: i64,
+  /// First line of `@`'s description.
+  pub message_first_line: String,
+  /// Working copy has unresolved conflicts.
+  pub conflicts: bool,
+  /// Lines added in `@`'s diff vs parent.
+  pub head_added: u32,
+  /// Lines removed in `@`'s diff vs parent.
+  pub head_removed: u32,
+}
+
 /// Per-workspace details gathered by the shell from `jj` for rendering
 /// the list table. Pure data — the core never reads from `jj`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -191,10 +341,6 @@ pub struct WorkspaceDetails {
   pub modified: bool,
   pub untracked: bool,
   pub conflicts: bool,
-  /// `@` equals `trunk()` exactly.
-  pub is_trunk: bool,
-  /// `@` is an ancestor of `trunk()`.
-  pub is_ancestor_of_trunk: bool,
   /// Short change ID (8 chars).
   pub commit_short: String,
   /// Seconds since `@`'s committer timestamp.
@@ -224,14 +370,45 @@ pub struct ObservedListState {
   /// Name of the workspace whose path contains cwd, if any.
   pub current_workspace: Option<String>,
   pub rows: Vec<ObservedListRow>,
+  /// Names of bookmarks without a workspace, only populated when the
+  /// caller asked for `--branches`.
+  pub extra_branch_names: Vec<String>,
+  /// Names of remote-only bookmarks, only populated when the caller
+  /// asked for `--remotes`. Format: bare local name (the `@<remote>`
+  /// suffix is stripped).
+  pub extra_remote_only_names: Vec<String>,
+}
+
+/// What kind of row this is. `Workspace` rows have a real path and full
+/// observation details. `Branch` rows are bookmarks without a workspace
+/// (either local-only-no-worktree or remote-only) and have empty
+/// working-copy state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListRowKind {
+  #[default]
+  Workspace,
+  Branch,
+}
+
+/// Options that gate which rows `observe_list` collects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ListOptions {
+  /// Include local bookmarks that don't have a workspace.
+  pub include_branches: bool,
+  /// Include remote-only bookmarks (`<name>@<remote>` with no local).
+  pub include_remotes: bool,
+  /// Reserved for later — adds extra columns. Phase 1 plumbs the flag;
+  /// the renderer keeps the existing column layout.
+  pub full: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListRow {
   /// Workspace name (also bookmark name by jjwt convention).
   pub name: String,
-  /// Absolute on-disk path of the workspace.
+  /// Absolute on-disk path of the workspace (empty for `Branch` rows).
   pub path: PathBuf,
+  pub kind: ListRowKind,
   /// Rendered from `[list].url`; "" if no config.
   pub url: String,
   /// Workspace whose path contains cwd.

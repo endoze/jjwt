@@ -1,8 +1,25 @@
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+use jjwt::core::types::OutputFormat as CoreOutputFormat;
 use jjwt::shell::cmd;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum OutputFormat {
+  #[default]
+  Text,
+  Json,
+}
+
+impl From<OutputFormat> for CoreOutputFormat {
+  fn from(o: OutputFormat) -> Self {
+    match o {
+      OutputFormat::Text => CoreOutputFormat::Text,
+      OutputFormat::Json => CoreOutputFormat::Json,
+    }
+  }
+}
 
 #[derive(Parser)]
 #[command(name = "jjwt", version, about)]
@@ -24,25 +41,105 @@ struct Cli {
 enum Cmd {
   Switch(SwitchCmd),
   Remove(RemoveCmd),
-  List,
+  List(ListCmd),
   Hook(HookCmd),
   Config(ConfigCmd),
+  Step(StepCmd),
+  /// Catch-all for user-defined aliases. First element is the alias name;
+  /// the rest are forwarded to the alias's template as `{{ args }}`.
+  #[command(external_subcommand)]
+  External(Vec<String>),
+}
+
+#[derive(Args)]
+struct StepCmd {
+  #[command(subcommand)]
+  sub: StepSub,
+}
+
+#[derive(Subcommand)]
+enum StepSub {
+  /// Render a template expression and print the result.
+  Eval { template: String },
+  /// Run a command in every workspace (tokens template-rendered per workspace).
+  ForEach {
+    /// Command to run; everything after `--` is captured.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+    cmd: Vec<String>,
+  },
+  /// Run a command tied to the current workspace; killed when the workspace disappears.
+  Tether {
+    /// Command to run; everything after `--` is captured.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+    cmd: Vec<String>,
+  },
 }
 
 #[derive(Args)]
 struct SwitchCmd {
   name: String,
-  #[arg(long)]
+  #[arg(short, long)]
   create: bool,
   #[arg(long)]
   rerun_hooks: bool,
+  /// Run a command after switching. Template-rendered; the shell wrapper
+  /// executes it inside the destination workspace.
+  #[arg(short = 'x', long)]
+  execute: Option<String>,
+  /// Remove a stale directory at the target workspace path before creating.
+  #[arg(long)]
+  clobber: bool,
+  /// Skip configured hooks for this invocation.
+  #[arg(long = "no-hooks")]
+  no_hooks: bool,
+  /// Deprecated alias for `--no-hooks`.
+  #[arg(long = "no-verify", hide = true)]
+  no_verify: bool,
+  /// Output format: `text` (default) or `json`.
+  #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+  format: OutputFormat,
 }
 
 #[derive(Args)]
 struct RemoveCmd {
-  name: String,
-  #[arg(long)]
+  /// Workspaces to remove. When omitted, defaults to the current workspace.
+  #[arg(num_args = 0..)]
+  names: Vec<String>,
+  /// Force worktree removal: bypass the "uncommitted changes" check.
+  #[arg(short, long)]
   force: bool,
+  /// Keep the bookmark even if it is merged into trunk.
+  #[arg(long = "no-delete-branch")]
+  no_delete_branch: bool,
+  /// Delete the bookmark even when not merged (worktrunk's `-D`).
+  #[arg(short = 'D', long = "force-delete")]
+  force_delete: bool,
+  /// Skip configured hooks for this invocation.
+  #[arg(long = "no-hooks")]
+  no_hooks: bool,
+  /// Deprecated alias for `--no-hooks`.
+  #[arg(long = "no-verify", hide = true)]
+  no_verify: bool,
+  /// Output format: `text` (default) or `json`.
+  #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+  format: OutputFormat,
+}
+
+#[derive(Args)]
+struct ListCmd {
+  /// Include local bookmarks that don't have a workspace.
+  #[arg(long)]
+  branches: bool,
+  /// Include remote-only bookmarks.
+  #[arg(long)]
+  remotes: bool,
+  /// Reserved for additional columns (CI / summary). Phase 1: flag is
+  /// plumbed through, but the column set is unchanged.
+  #[arg(long)]
+  full: bool,
+  /// Output format: `text` (default) or `json`.
+  #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+  format: OutputFormat,
 }
 
 #[derive(Args)]
@@ -59,6 +156,15 @@ struct ConfigCmd {
 #[derive(Subcommand)]
 enum ConfigSub {
   Shell(ConfigShellCmd),
+  Create(ConfigCreateCmd),
+  Show,
+}
+
+#[derive(Args)]
+struct ConfigCreateCmd {
+  /// Write a project config at `.config/wt.toml`.
+  #[arg(long)]
+  project: bool,
 }
 
 #[derive(Args)]
@@ -91,20 +197,62 @@ fn main() -> Result<()> {
   let config = cli.config.as_deref();
 
   match cli.cmd {
-    Cmd::Switch(s) => cmd::switch::run(cwd, config, s.name, s.create, s.rerun_hooks),
-    Cmd::Remove(r) => cmd::remove::run(cwd, config, r.name, r.force),
-    Cmd::List => cmd::list::run(cwd, config),
+    Cmd::Switch(s) => cmd::switch::run(
+      cwd,
+      config,
+      s.name,
+      s.create,
+      s.rerun_hooks,
+      s.no_hooks || s.no_verify,
+      s.execute,
+      s.clobber,
+      s.format.into(),
+    ),
+    Cmd::Remove(r) => cmd::remove::run(
+      cwd,
+      config,
+      r.names,
+      r.force,
+      r.no_hooks || r.no_verify,
+      r.no_delete_branch,
+      r.force_delete,
+      r.format.into(),
+    ),
+    Cmd::List(l) => cmd::list::run(
+      cwd,
+      config,
+      jjwt::core::types::ListOptions {
+        include_branches: l.branches,
+        include_remotes: l.remotes,
+        full: l.full,
+      },
+      l.format.into(),
+    ),
     Cmd::Hook(h) => cmd::hook::run(cwd, config, h.name),
     Cmd::Config(c) => match c.sub {
       ConfigSub::Shell(s) => match s.sub {
-        ConfigShellSub::Init(i) => {
-          if i.shell != "fish" {
-            return Err(anyhow::anyhow!("only fish is supported, got: {}", i.shell));
-          }
-
-          cmd::shell::run_fish()
-        }
+        ConfigShellSub::Init(i) => cmd::shell::dispatch(&i.shell),
       },
+      ConfigSub::Create(c) => cmd::config_create::run(cwd, c.project),
+      ConfigSub::Show => cmd::config_show::run(cwd, config),
     },
+    Cmd::Step(s) => match s.sub {
+      StepSub::Eval { template } => cmd::step_eval::run(cwd, &template),
+      StepSub::ForEach { cmd: argv } => cmd::step_for_each::run(cwd, argv),
+      StepSub::Tether { cmd: argv } => {
+        let code = cmd::step_tether::run(cwd, argv)?;
+
+        std::process::exit(code);
+      }
+    },
+    Cmd::External(parts) => {
+      let mut it = parts.into_iter();
+      let name = it
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing subcommand name"))?;
+      let forwarded: Vec<String> = it.collect();
+
+      cmd::alias::run(cwd, config, name, forwarded)
+    }
   }
 }

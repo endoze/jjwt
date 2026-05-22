@@ -3,6 +3,129 @@ use jjwt::core::plan::plan_remove;
 use jjwt::core::types::*;
 use std::path::PathBuf;
 
+fn hook(key: &str, cmd: &str) -> IndexMap<String, String> {
+  let mut g = IndexMap::new();
+
+  g.insert(key.into(), cmd.into());
+
+  g
+}
+
+#[test]
+fn remove_emits_pre_remove_then_actions_then_post_remove() {
+  let cfg = Config {
+    pre_remove: vec![hook("a", "echo pre-remove {{ branch }}")],
+    post_remove: vec![hook("b", "echo post-remove {{ branch }}")],
+    ..Default::default()
+  };
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    force: true,
+    no_hooks: false,
+    no_delete_branch: false,
+    force_delete: false,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    workspaces: vec![Workspace {
+      name: "feat-x".into(),
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+      stale: false,
+    }],
+    target_bookmark_exists: true,
+    target_bookmark_merged: true,
+    ..Default::default()
+  };
+
+  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let kinds: Vec<&'static str> = plan
+    .actions
+    .iter()
+    .map(|a| match a {
+      Action::JjWorkspaceForget { .. } => "forget",
+      Action::DeleteDir { .. } => "del",
+      Action::JjBookmarkDelete { .. } => "bookmark-del",
+      Action::RunHook { env, .. } => env
+        .iter()
+        .find(|(k, _)| k == "JJWT_HOOK_TYPE")
+        .map(|(_, v)| match v.as_str() {
+          "pre-remove" => "pre-remove",
+          "post-remove" => "post-remove",
+          _ => "hook?",
+        })
+        .unwrap_or("hook?"),
+      _ => "other",
+    })
+    .collect();
+
+  assert_eq!(
+    kinds,
+    vec!["pre-remove", "forget", "del", "bookmark-del", "post-remove"],
+  );
+}
+
+#[test]
+fn no_delete_branch_keeps_bookmark_even_when_merged() {
+  let cfg = Config::default();
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    no_delete_branch: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    workspaces: vec![Workspace {
+      name: "feat-x".into(),
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+      stale: false,
+    }],
+    target_bookmark_exists: true,
+    target_bookmark_merged: true,
+    ..Default::default()
+  };
+  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+
+  assert!(
+    !plan
+      .actions
+      .iter()
+      .any(|a| matches!(a, Action::JjBookmarkDelete { .. }))
+  );
+}
+
+#[test]
+fn force_delete_removes_unmerged_bookmark() {
+  let cfg = Config::default();
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    force_delete: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    workspaces: vec![Workspace {
+      name: "feat-x".into(),
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+      stale: false,
+    }],
+    target_bookmark_exists: true,
+    target_bookmark_merged: false,
+    ..Default::default()
+  };
+  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+
+  assert!(
+    plan
+      .actions
+      .iter()
+      .any(|a| matches!(a, Action::JjBookmarkDelete { .. }))
+  );
+}
+
 fn cfg() -> Config {
   let mut g = IndexMap::new();
   g.insert("db_stop".to_string(), "make db-stop".to_string());
@@ -11,6 +134,7 @@ fn cfg() -> Config {
     list: None,
     pre_start: vec![],
     pre_remove: vec![g],
+    ..Default::default()
   }
 }
 
@@ -27,7 +151,7 @@ fn obs_existing(name: &str, dirty: bool, merged: bool, bookmark_exists: bool) ->
     target_workspace_dirty: dirty,
     target_bookmark_merged: merged,
     target_bookmark_exists: bookmark_exists,
-    target_resolved_workspace: None,
+    ..Default::default()
   }
 }
 
@@ -37,6 +161,10 @@ fn remove_merged_bookmark_emits_full_sequence() {
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: false,
+    no_hooks: false,
+    no_delete_branch: false,
+    force_delete: false,
+    format: Default::default(),
   };
   let obs = obs_existing("feat-x", false, true, true);
 
@@ -89,6 +217,10 @@ fn remove_unmerged_bookmark_errors_without_force() {
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: false,
+    no_hooks: false,
+    no_delete_branch: false,
+    force_delete: false,
+    format: Default::default(),
   };
   let obs = obs_existing("feat-x", false, false, true);
 
@@ -102,6 +234,10 @@ fn remove_unmerged_bookmark_with_force_skips_bookmark_delete() {
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: true,
+    no_hooks: false,
+    no_delete_branch: false,
+    force_delete: false,
+    format: Default::default(),
   };
   let obs = obs_existing("feat-x", false, false, true);
 
@@ -126,6 +262,10 @@ fn remove_dirty_without_force_errors() {
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: false,
+    no_hooks: false,
+    no_delete_branch: false,
+    force_delete: false,
+    format: Default::default(),
   };
   let obs = obs_existing("feat-x", true, true, true);
 
@@ -139,6 +279,10 @@ fn remove_dirty_with_force_proceeds() {
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: true,
+    no_hooks: false,
+    no_delete_branch: false,
+    force_delete: false,
+    format: Default::default(),
   };
   let obs = obs_existing("feat-x", true, true, true);
 
@@ -169,6 +313,10 @@ fn remove_missing_workspace_errors() {
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: false,
+    no_hooks: false,
+    no_delete_branch: false,
+    force_delete: false,
+    format: Default::default(),
   };
   let mut obs = obs_existing("feat-x", false, true, true);
   obs.workspaces.clear();
@@ -183,6 +331,10 @@ fn remove_no_bookmark_skips_delete() {
   let args = RemoveArgs {
     name: "feat-x".into(),
     force: false,
+    no_hooks: false,
+    no_delete_branch: false,
+    force_delete: false,
+    format: Default::default(),
   };
   let obs = obs_existing("feat-x", false, true, false);
 

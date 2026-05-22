@@ -8,8 +8,13 @@ pub struct ProcOutput {
 }
 
 pub trait Proc {
-  /// Run `sh -c <cmd>` with cwd and env. Returns combined output.
+  /// Run `sh -c <cmd>` with cwd and env. Returns captured stdio.
   fn run_sh(&self, cmd: &str, cwd: &Path, env: &[(String, String)]) -> Result<ProcOutput>;
+
+  /// Run `sh -c <cmd>` with stdio inherited from the parent process.
+  /// Returns the exit status code. Used for interactive commands
+  /// (aliases, `step eval`, etc.) where users expect to see output live.
+  fn run_sh_inherit(&self, cmd: &str, cwd: &Path, env: &[(String, String)]) -> Result<i32>;
 }
 
 pub struct RealProc;
@@ -17,15 +22,33 @@ pub struct RealProc;
 impl Proc for RealProc {
   fn run_sh(&self, cmd: &str, cwd: &Path, env: &[(String, String)]) -> Result<ProcOutput> {
     let mut c = std::process::Command::new("sh");
+
     c.arg("-c").arg(cmd).current_dir(cwd);
+
     for (k, v) in env {
       c.env(k, v);
     }
+
     let out = c.output().map_err(|e| anyhow!("failed to spawn sh: {e}"))?;
+
     Ok(ProcOutput {
       status: out.status.code().unwrap_or(-1),
       stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
       stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
     })
+  }
+
+  fn run_sh_inherit(&self, cmd: &str, cwd: &Path, env: &[(String, String)]) -> Result<i32> {
+    let mut c = std::process::Command::new("sh");
+
+    c.arg("-c").arg(cmd).current_dir(cwd);
+
+    for (k, v) in env {
+      c.env(k, v);
+    }
+
+    let status = c.status().map_err(|e| anyhow!("failed to spawn sh: {e}"))?;
+
+    Ok(status.code().unwrap_or(-1))
   }
 }

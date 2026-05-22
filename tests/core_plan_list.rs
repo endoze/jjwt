@@ -9,6 +9,7 @@ fn cfg_with_list() -> Config {
     }),
     pre_start: vec![],
     pre_remove: vec![],
+    ..Default::default()
   }
 }
 
@@ -17,8 +18,6 @@ fn details(commit: &str, msg: &str) -> WorkspaceDetails {
     modified: false,
     untracked: false,
     conflicts: false,
-    is_trunk: false,
-    is_ancestor_of_trunk: false,
     commit_short: commit.into(),
     age_seconds: 0,
     message_first_line: msg.into(),
@@ -32,6 +31,8 @@ fn obs_with_workspaces() -> ObservedListState {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
     current_workspace: Some("default".into()),
+    extra_branch_names: Vec::new(),
+    extra_remote_only_names: Vec::new(),
     rows: vec![
       ObservedListRow {
         workspace: Workspace {
@@ -39,10 +40,7 @@ fn obs_with_workspaces() -> ObservedListState {
           path: PathBuf::from("/repo"),
           stale: false,
         },
-        details: WorkspaceDetails {
-          is_trunk: true,
-          ..details("aaaaaaaa", "init")
-        },
+        details: details("aaaaaaaa", "init"),
         ahead: 0,
         behind: 0,
         has_remote_bookmark: false,
@@ -64,7 +62,13 @@ fn obs_with_workspaces() -> ObservedListState {
 
 #[test]
 fn list_renders_url_per_workspace() {
-  let plan = plan_list(&cfg_with_list(), &obs_with_workspaces(), false).expect("plan ok");
+  let plan = plan_list(
+    &cfg_with_list(),
+    &obs_with_workspaces(),
+    false,
+    OutputFormat::Text,
+  )
+  .expect("plan ok");
 
   assert_eq!(plan.actions.len(), 1);
 
@@ -84,8 +88,9 @@ fn list_without_list_config_still_prints_names() {
     list: None,
     pre_start: vec![],
     pre_remove: vec![],
+    ..Default::default()
   };
-  let plan = plan_list(&cfg, &obs_with_workspaces(), false).expect("plan ok");
+  let plan = plan_list(&cfg, &obs_with_workspaces(), false, OutputFormat::Text).expect("plan ok");
   let Action::PrintLine(out) = &plan.actions[0] else {
     panic!()
   };
@@ -96,7 +101,13 @@ fn list_without_list_config_still_prints_names() {
 
 #[test]
 fn list_default_workspace_has_dot_path_not_worktrees() {
-  let plan = plan_list(&cfg_with_list(), &obs_with_workspaces(), false).expect("plan ok");
+  let plan = plan_list(
+    &cfg_with_list(),
+    &obs_with_workspaces(),
+    false,
+    OutputFormat::Text,
+  )
+  .expect("plan ok");
   let Action::PrintLine(out) = &plan.actions[0] else {
     panic!()
   };
@@ -119,7 +130,7 @@ fn list_footer_counts_ahead_and_dirty() {
   let mut obs = obs_with_workspaces();
 
   obs.rows[1].details.modified = true;
-  let plan = plan_list(&cfg_with_list(), &obs, false).expect("plan ok");
+  let plan = plan_list(&cfg_with_list(), &obs, false, OutputFormat::Text).expect("plan ok");
   let Action::PrintLine(out) = &plan.actions[0] else {
     panic!()
   };
@@ -135,10 +146,9 @@ fn list_errors_when_not_jj_repo() {
   let obs = ObservedListState {
     repo_root: PathBuf::from("/tmp"),
     is_jj_repo: false,
-    current_workspace: None,
-    rows: vec![],
+    ..Default::default()
   };
-  let err = plan_list(&cfg_with_list(), &obs, false).unwrap_err();
+  let err = plan_list(&cfg_with_list(), &obs, false, OutputFormat::Text).unwrap_err();
 
   assert!(matches!(err, CoreError::NotJjRepo), "got: {err:?}");
 }

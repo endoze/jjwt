@@ -11,6 +11,7 @@ fn row(name: &str) -> ListRow {
     } else {
       format!("/repo/.worktrees/{name}")
     }),
+    kind: ListRowKind::Workspace,
     url: String::new(),
     is_current: false,
     is_default: name == "default",

@@ -1,12 +1,41 @@
-use crate::core::filters::{hash_port::hash_port, sanitize::sanitize};
+use crate::core::filters::{
+  codename::{CODENAME_MAX_WORDS, codename},
+  hash::short_hash,
+  hash_port::hash_port,
+  path_parts::{basename, dirname},
+  sanitize::sanitize,
+  sanitize_db::sanitize_db,
+  sanitize_hash::sanitize_hash,
+};
 use crate::core::types::{CoreError, RenderContext};
-use minijinja::{Environment, UndefinedBehavior, value::Value};
+use minijinja::{Environment, ErrorKind, UndefinedBehavior, value::Value};
 
 fn build_env() -> Environment<'static> {
   let mut env = Environment::new();
+
   env.set_undefined_behavior(UndefinedBehavior::Strict);
   env.add_filter("hash_port", |v: String| -> u32 { hash_port(&v) as u32 });
   env.add_filter("sanitize", |v: String| -> String { sanitize(&v) });
+  env.add_filter("sanitize_db", |v: String| -> String { sanitize_db(&v) });
+  env.add_filter("sanitize_hash", |v: String| -> String { sanitize_hash(&v) });
+  env.add_filter("hash", |v: String| -> String { short_hash(&v) });
+  env.add_filter("dirname", |v: String| -> String { dirname(&v) });
+  env.add_filter("basename", |v: String| -> String { basename(&v) });
+  env.add_filter(
+    "codename",
+    |v: String, n: Option<u32>| -> Result<String, minijinja::Error> {
+      let n = n.unwrap_or(2) as usize;
+
+      if n == 0 || n > CODENAME_MAX_WORDS {
+        return Err(minijinja::Error::new(
+          ErrorKind::InvalidOperation,
+          format!("codename word count must be between 1 and {CODENAME_MAX_WORDS}"),
+        ));
+      }
+
+      Ok(codename(&v, n))
+    },
+  );
 
   env
 }
@@ -16,8 +45,39 @@ pub fn render(template: &str, ctx: &RenderContext) -> Result<String, CoreError> 
   let tmpl = env
     .template_from_str(template)
     .map_err(|e| CoreError::TemplateRender(e.to_string()))?;
-  let mut data = std::collections::BTreeMap::new();
+  let mut data = std::collections::BTreeMap::<&'static str, Value>::new();
+
   data.insert("branch", Value::from(ctx.branch.clone()));
+
+  if let Some(p) = ctx.worktree_path.as_ref() {
+    data.insert("worktree_path", Value::from(p.display().to_string()));
+  }
+
+  if let Some(n) = ctx.worktree_name.as_ref() {
+    data.insert("worktree_name", Value::from(n.clone()));
+  }
+
+  if let Some(r) = ctx.repo.as_ref() {
+    data.insert("repo", Value::from(r.clone()));
+  }
+
+  if let Some(p) = ctx.repo_path.as_ref() {
+    data.insert("repo_path", Value::from(p.display().to_string()));
+  }
+
+  if let Some(p) = ctx.cwd.as_ref() {
+    data.insert("cwd", Value::from(p.display().to_string()));
+  }
+
+  if let Some(t) = ctx.hook_type.as_ref() {
+    data.insert("hook_type", Value::from(t.clone()));
+  }
+
+  if let Some(n) = ctx.hook_name.as_ref() {
+    data.insert("hook_name", Value::from(n.clone()));
+  }
+
+  data.insert("args", Value::from(ctx.args.clone()));
 
   tmpl
     .render(data)

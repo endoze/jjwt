@@ -14,6 +14,7 @@ const BRANCHES: &[&str] = &["feat-port-webhook-to-rust", "main", "bug-foo"];
 fn render_all_for_branch(cfg: &jjwt::core::types::Config, branch: &str) -> String {
   let ctx = RenderContext {
     branch: branch.into(),
+    ..Default::default()
   };
   let mut out = String::new();
 

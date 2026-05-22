@@ -87,16 +87,40 @@ impl Jj for FakeJj {
     Ok(false)
   }
 
-  fn workspace_details(&self, _r: &Path, _w: &str) -> Result<WorkspaceDetails> {
-    Ok(WorkspaceDetails::default())
+  fn workspace_status(&self, _r: &Path, _w: &str) -> Result<(bool, bool)> {
+    Ok((false, false))
+  }
+
+  fn workspace_commit_info_batch(
+    &self,
+    _r: &Path,
+    _w: &[String],
+  ) -> Result<std::collections::HashMap<String, jjwt::core::types::CommitInfo>> {
+    Ok(std::collections::HashMap::new())
   }
 
   fn workspace_ahead_behind_trunk(&self, _r: &Path, _w: &str) -> Result<(u32, u32)> {
     Ok((0, 0))
   }
 
+  fn workspace_ahead_behind_batch(
+    &self,
+    _r: &Path,
+    _w: &[String],
+  ) -> Result<std::collections::HashMap<String, (u32, u32)>> {
+    Ok(std::collections::HashMap::new())
+  }
+
   fn bookmarks_with_remote(&self, _r: &Path) -> Result<std::collections::HashSet<String>> {
     Ok(std::collections::HashSet::new())
+  }
+
+  fn bookmarks_local(&self, _r: &Path) -> Result<Vec<String>> {
+    Ok(Vec::new())
+  }
+
+  fn bookmark_sets(&self, _r: &Path) -> Result<(Vec<String>, std::collections::HashSet<String>)> {
+    Ok((Vec::new(), std::collections::HashSet::new()))
   }
 
   fn trunk_bookmark(&self, _r: &Path) -> Result<Option<String>> {
@@ -144,6 +168,19 @@ impl Proc for FakeProc {
       stdout: String::new(),
       stderr: String::new(),
     })
+  }
+
+  fn run_sh_inherit(&self, cmd: &str, cwd: &Path, _env: &[(String, String)]) -> Result<i32> {
+    self
+      .calls
+      .borrow_mut()
+      .push(format!("exec {cmd} (cwd={})", cwd.display()));
+
+    if self.fail_on.as_deref() == Some(cmd) {
+      return Ok(1);
+    }
+
+    Ok(0)
   }
 }
 

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::core::types::{Workspace, WorkspaceDetails};
+use crate::core::types::{CommitInfo, Workspace};
 
 pub trait Jj {
   /// Detect the repo root (parent of `.jj/`); errors if not in a jj repo.
@@ -24,15 +24,46 @@ pub trait Jj {
   fn bookmark_is_merged_into_trunk(&self, repo_root: &Path, name: &str) -> Result<bool>;
   /// True if `jj status` for the workspace shows any uncommitted changes.
   fn workspace_is_dirty(&self, repo_root: &Path, workspace: &str) -> Result<bool>;
-  /// Per-workspace details for list rendering (see [`WorkspaceDetails`]).
-  fn workspace_details(&self, repo_root: &Path, workspace: &str) -> Result<WorkspaceDetails>;
+  /// Per-workspace status flags (modified, untracked) for list rendering.
+  /// Only collects data that cannot be obtained from
+  /// [`workspace_commit_info_batch`] (which handles commit metadata,
+  /// conflicts, and diff stats).
+  fn workspace_status(&self, repo_root: &Path, workspace: &str) -> Result<(bool, bool)>;
+  /// Batch-fetch commit metadata, conflict status, and diff stats for all
+  /// named workspaces in a single `jj log` call. Returns a map keyed by
+  /// workspace name. Uses `\x1e` record separator to handle multi-line
+  /// `diff.stat()` output.
+  fn workspace_commit_info_batch(
+    &self,
+    repo_root: &Path,
+    workspaces: &[String],
+  ) -> Result<std::collections::HashMap<String, CommitInfo>>;
   /// Commits ahead/behind trunk for the given workspace's `@`.
   /// Returns `(ahead, behind)`.
   fn workspace_ahead_behind_trunk(&self, repo_root: &Path, workspace: &str) -> Result<(u32, u32)>;
+  /// Batch-fetch ahead/behind counts for all named workspaces in two
+  /// `jj log` calls (one for ahead, one for behind). Returns a map keyed
+  /// by workspace name → `(ahead, behind)`.
+  fn workspace_ahead_behind_batch(
+    &self,
+    repo_root: &Path,
+    workspaces: &[String],
+  ) -> Result<std::collections::HashMap<String, (u32, u32)>>;
   /// Set of local bookmark names that have at least one remote-tracking
   /// variant (e.g. `name@origin`). Used to decide whether to render the
   /// "tracks remote" glyph in the list view.
   fn bookmarks_with_remote(&self, repo_root: &Path) -> Result<std::collections::HashSet<String>>;
+  /// All local bookmark names (one entry per bookmark, no `@<remote>`
+  /// suffix). Used by `list --branches` and `--remotes` to discover
+  /// bookmarks that don't have an associated workspace.
+  fn bookmarks_local(&self, repo_root: &Path) -> Result<Vec<String>>;
+  /// All bookmark sets in one call. Returns `(all_local, with_remote)`.
+  /// `all_local` is every local bookmark name; `with_remote` is the subset
+  /// that has at least one remote-tracking variant.
+  fn bookmark_sets(
+    &self,
+    repo_root: &Path,
+  ) -> Result<(Vec<String>, std::collections::HashSet<String>)>;
   /// Name of the bookmark at `trunk()`, if any (typically "main" or "master").
   /// Used so `switch <default-branch>` routes to the default workspace.
   fn trunk_bookmark(&self, repo_root: &Path) -> Result<Option<String>>;
@@ -296,55 +327,9 @@ impl Jj for JjCli {
     Ok(!out.stdout.is_empty())
   }
 
-  fn workspace_details(&self, repo_root: &Path, workspace: &str) -> Result<WorkspaceDetails> {
+  fn workspace_status(&self, repo_root: &Path, workspace: &str) -> Result<(bool, bool)> {
     let ws_path = workspace_dir(repo_root, workspace);
 
-    // Compose the workspace's `@` revset. We can't unconditionally use
-    // `<ws>@` because the syntax depends on whether jj knows the workspace
-    // by name; using `at_operation(@, <ws>@)` would over-complicate.
-    // Empirically `<ws>@` works for all known workspaces, including
-    // "default".
-    let at_rev = format!("{workspace}@");
-
-    // Single log call: change_id(8) \t description.first_line() \t committer_unix
-    let tmpl = r#"change_id.shortest(8) ++ "\t" ++ description.first_line() ++ "\t" ++ committer.timestamp().format("%s") ++ "\n""#;
-    let log_out = run(
-      std::process::Command::new(&self.jj_path)
-        .arg("--repository")
-        .arg(repo_root)
-        .arg("log")
-        .arg("--no-graph")
-        .arg("-r")
-        .arg(&at_rev)
-        .arg("-T")
-        .arg(tmpl)
-        .arg("--limit")
-        .arg("1"),
-    )?;
-    let log_text = String::from_utf8_lossy(&log_out.stdout);
-    let log_line = log_text.lines().next().unwrap_or("");
-    let mut log_parts = log_line.splitn(3, '\t');
-    let commit_short = log_parts.next().unwrap_or("").to_string();
-    let message_first_line = log_parts.next().unwrap_or("").to_string();
-    let ts_str = log_parts.next().unwrap_or("0").trim();
-    let timestamp: i64 = ts_str.parse().unwrap_or(0);
-    let now = std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .map(|d| d.as_secs() as i64)
-      .unwrap_or(0);
-    let age_seconds = (now - timestamp).max(0);
-
-    // is_trunk: `<ws>@ & latest(trunk())` non-empty
-    let is_trunk = revset_nonempty(
-      &self.jj_path,
-      repo_root,
-      &format!("{at_rev} & latest(trunk())"),
-    )?;
-    // is_ancestor_of_trunk: `<ws>@ & ::trunk()` non-empty
-    let is_ancestor_of_trunk =
-      revset_nonempty(&self.jj_path, repo_root, &format!("{at_rev} & ::trunk()"))?;
-
-    // Status flags from `jj status` in the workspace.
     let status_out = std::process::Command::new(&self.jj_path)
       .current_dir(&ws_path)
       .arg("status")
@@ -359,40 +344,92 @@ impl Jj for JjCli {
     }
 
     let status_text = String::from_utf8_lossy(&status_out.stdout);
-    let (modified, untracked, conflicts) = parse_status(&status_text);
+    let (modified, untracked, _conflicts) = parse_status(&status_text);
 
-    // Head diff: `jj diff -r @ --stat`. Parse the trailing summary line.
-    let diff_out = std::process::Command::new(&self.jj_path)
-      .current_dir(&ws_path)
-      .arg("diff")
-      .arg("-r")
-      .arg("@")
-      .arg("--stat")
-      .output()
-      .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    Ok((modified, untracked))
+  }
 
-    if !diff_out.status.success() {
-      return Err(anyhow::anyhow!(
-        "jj diff --stat failed: {}",
-        String::from_utf8_lossy(&diff_out.stderr)
-      ));
+  fn workspace_commit_info_batch(
+    &self,
+    repo_root: &Path,
+    workspaces: &[String],
+  ) -> Result<std::collections::HashMap<String, CommitInfo>> {
+    let mut result = std::collections::HashMap::new();
+
+    if workspaces.is_empty() {
+      return Ok(result);
     }
 
-    let diff_text = String::from_utf8_lossy(&diff_out.stdout);
-    let (head_added, head_removed) = parse_diff_stat_summary(&diff_text);
+    // Build a revset union: `all:(default@|feat@|…)`
+    let rev_parts: Vec<String> = workspaces.iter().map(|w| format!("{w}@")).collect();
+    let revset = format!("all:({})", rev_parts.join("|"));
 
-    Ok(WorkspaceDetails {
-      modified,
-      untracked,
-      conflicts,
-      is_trunk,
-      is_ancestor_of_trunk,
-      commit_short,
-      age_seconds,
-      message_first_line,
-      head_added,
-      head_removed,
-    })
+    // Template emitting tab-delimited fields per workspace, with
+    // `diff.stat()` (multi-line) terminated by \x1e record separator.
+    let tmpl = r#"working_copies ++ "\t" ++ change_id.shortest(8) ++ "\t" ++ description.first_line() ++ "\t" ++ committer.timestamp().format("%s") ++ "\t" ++ if(conflict, "1", "0") ++ "\t" ++ diff.stat() ++ "\x1e""#;
+
+    let out = run(
+      std::process::Command::new(&self.jj_path)
+        .arg("--repository")
+        .arg(repo_root)
+        .arg("log")
+        .arg("--no-graph")
+        .arg("-r")
+        .arg(&revset)
+        .arg("-T")
+        .arg(tmpl),
+    )?;
+
+    let now = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .map(|d| d.as_secs() as i64)
+      .unwrap_or(0);
+
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    // Records are separated by \x1e. Within each record the first line
+    // holds the tab-delimited metadata; subsequent lines are diff.stat()
+    // file rows; the last non-empty line is the diff summary.
+    for record in text.split('\x1e') {
+      let record = record.trim();
+
+      if record.is_empty() {
+        continue;
+      }
+
+      let first_line = record.lines().next().unwrap_or("");
+      let mut parts = first_line.splitn(6, '\t');
+      let ws_tag = parts.next().unwrap_or("").trim();
+      let commit_short = parts.next().unwrap_or("").to_string();
+      let message_first_line = parts.next().unwrap_or("").to_string();
+      let ts_str = parts.next().unwrap_or("0").trim();
+      let conflict_str = parts.next().unwrap_or("0").trim();
+      // Remaining part (index 5) is the first line of diff.stat() output;
+      // we need the summary line which is the LAST line of the record.
+
+      let timestamp: i64 = ts_str.parse().unwrap_or(0);
+      let age_seconds = (now - timestamp).max(0);
+      let conflicts = conflict_str == "1";
+
+      // Parse diff stat summary from the last non-empty line of the record.
+      let (head_added, head_removed) = parse_diff_stat_summary(record);
+
+      if let Some(ws_name) = ws_tag.strip_suffix('@') {
+        result.insert(
+          ws_name.to_string(),
+          CommitInfo {
+            commit_short,
+            age_seconds,
+            message_first_line,
+            conflicts,
+            head_added,
+            head_removed,
+          },
+        );
+      }
+    }
+
+    Ok(result)
   }
 
   fn workspace_ahead_behind_trunk(&self, repo_root: &Path, workspace: &str) -> Result<(u32, u32)> {
@@ -401,6 +438,110 @@ impl Jj for JjCli {
     let behind = revset_count(&self.jj_path, repo_root, &format!("{at_rev}..trunk()"))?;
 
     Ok((ahead, behind))
+  }
+
+  fn workspace_ahead_behind_batch(
+    &self,
+    repo_root: &Path,
+    workspaces: &[String],
+  ) -> Result<std::collections::HashMap<String, (u32, u32)>> {
+    let mut result: std::collections::HashMap<String, (u32, u32)> =
+      workspaces.iter().map(|w| (w.clone(), (0, 0))).collect();
+
+    if workspaces.is_empty() {
+      return Ok(result);
+    }
+
+    let rev_parts: Vec<String> = workspaces.iter().map(|w| format!("{w}@")).collect();
+    let union = rev_parts.join("|");
+
+    // Ahead: commits in `trunk()..(w1@|w2@|…)`, tagged by workspace
+    // using `self.contained_in("trunk()..wi@")`.
+    let ahead_revset = format!("trunk()..({union})");
+    let ahead_contained: Vec<String> = workspaces
+      .iter()
+      .map(|w| format!(r#"if(self.contained_in("trunk()..{w}@"), "{w}\n", "")"#))
+      .collect();
+    let ahead_tmpl = ahead_contained.join(" ++ ");
+
+    let ahead_out = run(
+      std::process::Command::new(&self.jj_path)
+        .arg("--repository")
+        .arg(repo_root)
+        .arg("log")
+        .arg("--no-graph")
+        .arg("-r")
+        .arg(&ahead_revset)
+        .arg("-T")
+        .arg(&ahead_tmpl),
+    )?;
+
+    let ahead_text = String::from_utf8_lossy(&ahead_out.stdout);
+
+    for line in ahead_text.lines() {
+      let ws = line.trim();
+
+      if let Some(entry) = result.get_mut(ws) {
+        entry.0 += 1;
+      }
+    }
+
+    // Behind: commits in `(w1@|w2@|…)..trunk()`, tagged similarly.
+    let behind_revset = format!("({union})..trunk()");
+    let behind_contained: Vec<String> = workspaces
+      .iter()
+      .map(|w| format!(r#"if(self.contained_in("{w}@..trunk()"), "{w}\n", "")"#))
+      .collect();
+    let behind_tmpl = behind_contained.join(" ++ ");
+
+    let behind_out = run(
+      std::process::Command::new(&self.jj_path)
+        .arg("--repository")
+        .arg(repo_root)
+        .arg("log")
+        .arg("--no-graph")
+        .arg("-r")
+        .arg(&behind_revset)
+        .arg("-T")
+        .arg(&behind_tmpl),
+    )?;
+
+    let behind_text = String::from_utf8_lossy(&behind_out.stdout);
+
+    for line in behind_text.lines() {
+      let ws = line.trim();
+
+      if let Some(entry) = result.get_mut(ws) {
+        entry.1 += 1;
+      }
+    }
+
+    Ok(result)
+  }
+
+  fn bookmarks_local(&self, repo_root: &Path) -> Result<Vec<String>> {
+    let out = std::process::Command::new(&self.jj_path)
+      .arg("--repository")
+      .arg(repo_root)
+      .arg("bookmark")
+      .arg("list")
+      .arg("-T")
+      .arg(r#"name ++ "\n""#)
+      .output()
+      .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+
+    if !out.status.success() {
+      return Ok(Vec::new());
+    }
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    let names: Vec<String> = text
+      .lines()
+      .map(|s| s.trim().to_string())
+      .filter(|s| !s.is_empty())
+      .collect();
+
+    Ok(names)
   }
 
   fn bookmarks_with_remote(&self, repo_root: &Path) -> Result<std::collections::HashSet<String>> {
@@ -439,6 +580,61 @@ impl Jj for JjCli {
     Ok(set)
   }
 
+  fn bookmark_sets(
+    &self,
+    repo_root: &Path,
+  ) -> Result<(Vec<String>, std::collections::HashSet<String>)> {
+    // Single `jj bookmark list --all-remotes` call extracts both:
+    // - `all_local`: names where the `remote` field is empty (local-only)
+    //   or any name that appears at least once with empty remote
+    // - `with_remote`: names that have at least one non-empty remote
+    let out = std::process::Command::new(&self.jj_path)
+      .arg("--repository")
+      .arg(repo_root)
+      .arg("bookmark")
+      .arg("list")
+      .arg("--all-remotes")
+      .arg("-T")
+      .arg(r#"name ++ "\t" ++ remote ++ "\n""#)
+      .output()
+      .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+
+    let mut all_local = std::collections::HashSet::new();
+    let mut with_remote = std::collections::HashSet::new();
+
+    if !out.status.success() {
+      return Ok((Vec::new(), std::collections::HashSet::new()));
+    }
+
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    for line in text.lines() {
+      let trimmed = line.trim();
+
+      if trimmed.is_empty() {
+        continue;
+      }
+
+      if let Some((name, remote)) = trimmed.split_once('\t') {
+        if name.is_empty() {
+          continue;
+        }
+
+        // Every name we see is a local bookmark (the --all-remotes
+        // output includes local entries with empty remote).
+        all_local.insert(name.to_string());
+
+        if !remote.is_empty() {
+          with_remote.insert(name.to_string());
+        }
+      }
+    }
+
+    let local_vec: Vec<String> = all_local.into_iter().collect();
+
+    Ok((local_vec, with_remote))
+  }
+
   fn trunk_bookmark(&self, repo_root: &Path) -> Result<Option<String>> {
     let out = std::process::Command::new(&self.jj_path)
       .arg("--repository")
@@ -465,24 +661,6 @@ impl Jj for JjCli {
 
     Ok(name)
   }
-}
-
-fn revset_nonempty(jj: &Path, repo_root: &Path, revset: &str) -> Result<bool> {
-  let out = run(
-    std::process::Command::new(jj)
-      .arg("--repository")
-      .arg(repo_root)
-      .arg("log")
-      .arg("--no-graph")
-      .arg("-r")
-      .arg(revset)
-      .arg("-T")
-      .arg(r#""x""#)
-      .arg("--limit")
-      .arg("1"),
-  )?;
-
-  Ok(!out.stdout.is_empty())
 }
 
 fn revset_count(jj: &Path, repo_root: &Path, revset: &str) -> Result<u32> {

@@ -3,6 +3,71 @@ use jjwt::core::plan::plan_switch;
 use jjwt::core::types::*;
 use std::path::PathBuf;
 
+fn one_hook(key: &str, cmd: &str) -> IndexMap<String, String> {
+  let mut g = IndexMap::new();
+
+  g.insert(key.into(), cmd.into());
+
+  g
+}
+
+#[test]
+fn create_emits_pre_switch_then_workspace_then_pre_post_start_then_print_then_post_switch() {
+  let cfg = Config {
+    pre_switch: vec![one_hook("ps", "echo pre-switch {{ branch }}")],
+    pre_start: vec![one_hook("p1", "echo pre-start {{ branch }}")],
+    post_start: vec![one_hook("p2", "echo post-start {{ branch }}")],
+    post_switch: vec![one_hook("pe", "echo post-switch {{ branch }}")],
+    ..Default::default()
+  };
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let kinds: Vec<&'static str> = plan
+    .actions
+    .iter()
+    .map(|a| match a {
+      Action::JjWorkspaceAdd { .. } => "add",
+      Action::JjBookmarkCreate { .. } => "bookmark",
+      Action::RunHook { env, .. } => env
+        .iter()
+        .find(|(k, _)| k == "JJWT_HOOK_TYPE")
+        .map(|(_, v)| match v.as_str() {
+          "pre-switch" => "pre-switch",
+          "pre-start" => "pre-start",
+          "post-start" => "post-start",
+          "post-switch" => "post-switch",
+          _ => "hook?",
+        })
+        .unwrap_or("hook?"),
+      Action::PrintLine(_) => "print",
+      _ => "other",
+    })
+    .collect();
+
+  assert_eq!(
+    kinds,
+    vec![
+      "pre-switch",
+      "add",
+      "bookmark",
+      "pre-start",
+      "post-start",
+      "print",
+      "post-switch",
+    ],
+  );
+}
+
 fn cfg_with_two_pre_start_groups() -> Config {
   let mut g1 = IndexMap::new();
   g1.insert("direnv".to_string(), "direnv allow .".to_string());
@@ -13,6 +78,7 @@ fn cfg_with_two_pre_start_groups() -> Config {
     list: None,
     pre_start: vec![g1, g2],
     pre_remove: vec![],
+    ..Default::default()
   }
 }
 
@@ -20,12 +86,7 @@ fn observed_clean() -> ObservedState {
   ObservedState {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
-    workspaces: vec![],
-    target_path_exists: false,
-    target_workspace_dirty: false,
-    target_bookmark_merged: false,
-    target_bookmark_exists: false,
-    target_resolved_workspace: None,
+    ..Default::default()
   }
 }
 
@@ -36,6 +97,10 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     name: "feat-x".into(),
     create: true,
     rerun_hooks: false,
+    no_hooks: false,
+    execute: None,
+    clobber: false,
+    format: Default::default(),
   };
   let obs = observed_clean();
 
@@ -115,6 +180,10 @@ fn create_errors_if_workspace_already_exists() {
     name: "feat-x".into(),
     create: true,
     rerun_hooks: false,
+    no_hooks: false,
+    execute: None,
+    clobber: false,
+    format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.workspaces.push(Workspace {
@@ -134,6 +203,10 @@ fn create_errors_if_not_a_jj_repo() {
     name: "feat-x".into(),
     create: true,
     rerun_hooks: false,
+    no_hooks: false,
+    execute: None,
+    clobber: false,
+    format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.is_jj_repo = false;
@@ -149,6 +222,10 @@ fn switch_existing_no_create_emits_only_print() {
     name: "feat-x".into(),
     create: false,
     rerun_hooks: false,
+    no_hooks: false,
+    execute: None,
+    clobber: false,
+    format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.workspaces.push(Workspace {
@@ -175,6 +252,10 @@ fn switch_existing_stale_emits_update_stale_then_print() {
     name: "feat-x".into(),
     create: false,
     rerun_hooks: false,
+    no_hooks: false,
+    execute: None,
+    clobber: false,
+    format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.workspaces.push(Workspace {
@@ -201,6 +282,10 @@ fn switch_existing_with_rerun_hooks_reruns_them() {
     name: "feat-x".into(),
     create: false,
     rerun_hooks: true,
+    no_hooks: false,
+    execute: None,
+    clobber: false,
+    format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.workspaces.push(Workspace {
@@ -224,6 +309,10 @@ fn switch_missing_without_create_errors() {
     name: "feat-x".into(),
     create: false,
     rerun_hooks: false,
+    no_hooks: false,
+    execute: None,
+    clobber: false,
+    format: Default::default(),
   };
   let obs = observed_clean();
 
@@ -238,6 +327,10 @@ fn switch_trunk_bookmark_name_routes_to_default_workspace() {
     name: "main".into(),
     create: false,
     rerun_hooks: false,
+    no_hooks: false,
+    execute: None,
+    clobber: false,
+    format: Default::default(),
   };
   let mut obs = observed_clean();
 

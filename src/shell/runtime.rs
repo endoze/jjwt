@@ -73,6 +73,17 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
           ));
         }
       }
+      Action::Exec {
+        rendered_cmd,
+        cwd,
+        env,
+      } => {
+        let status = rt.proc.run_sh_inherit(rendered_cmd, cwd, env)?;
+
+        if status != 0 {
+          return Err(anyhow!("command failed (status {status}): {rendered_cmd}"));
+        }
+      }
       Action::PrintLine(s) => {
         printed.push(s.clone());
       }

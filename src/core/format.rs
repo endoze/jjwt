@@ -1,5 +1,6 @@
-use crate::core::types::{AheadBehind, LineDiff, ListRow, StatusFlags, TrunkRel};
+use crate::core::types::{AheadBehind, LineDiff, ListRow, ListRowKind, StatusFlags, TrunkRel};
 use anstyle::{AnsiColor, Color, Style};
+use serde_json::{Map, Value, json};
 use unicode_width::UnicodeWidthStr;
 
 const COL_SEP: &str = "  ";
@@ -154,7 +155,9 @@ fn compute_widths(cells: &[[Cell; 9]]) -> [usize; 9] {
 }
 
 fn gutter_char(row: &ListRow) -> char {
-  if row.is_current {
+  if matches!(row.kind, ListRowKind::Branch) {
+    '/'
+  } else if row.is_current {
     '@'
   } else if row.is_default {
     '^'
@@ -164,10 +167,10 @@ fn gutter_char(row: &ListRow) -> char {
 }
 
 fn format_path(row: &ListRow) -> String {
-  if row.is_default {
-    ".".to_string()
-  } else {
-    format!("./.worktrees/{}", row.name)
+  match row.kind {
+    ListRowKind::Branch => String::new(),
+    ListRowKind::Workspace if row.is_default => ".".to_string(),
+    ListRowKind::Workspace => format!("./.worktrees/{}", row.name),
   }
 }
 
@@ -384,4 +387,99 @@ fn format_summary(rows: &[ListRow], styled: bool) -> String {
 /// Wrap a string in `style`'s ANSI escapes.
 fn wrap(s: &str, style: Style) -> String {
   format!("{style}{s}{style:#}")
+}
+
+/// Render the list as a JSON array (one object per workspace). Designed
+/// for tool integration — the keys mirror the table columns but expose
+/// raw values (numbers stay numbers, the trunk relation is a string).
+pub fn format_list_json(rows: &[ListRow]) -> String {
+  let arr: Vec<Value> = rows.iter().map(list_row_json).collect();
+
+  serde_json::to_string_pretty(&Value::Array(arr)).expect("json serialize")
+}
+
+fn list_row_json(r: &ListRow) -> Value {
+  let mut m = Map::new();
+
+  m.insert("name".into(), Value::String(r.name.clone()));
+  m.insert(
+    "kind".into(),
+    Value::String(
+      match r.kind {
+        ListRowKind::Workspace => "workspace",
+        ListRowKind::Branch => "branch",
+      }
+      .into(),
+    ),
+  );
+  m.insert("path".into(), Value::String(r.path.display().to_string()));
+  m.insert(
+    "url".into(),
+    if r.url.is_empty() {
+      Value::Null
+    } else {
+      Value::String(r.url.clone())
+    },
+  );
+  m.insert("is_current".into(), Value::Bool(r.is_current));
+  m.insert("is_default".into(), Value::Bool(r.is_default));
+  m.insert("commit".into(), Value::String(r.commit.clone()));
+  m.insert("age".into(), Value::String(r.age.clone()));
+  m.insert("message".into(), Value::String(r.message.clone()));
+  m.insert(
+    "status".into(),
+    json!({
+      "has_changes": r.status.has_changes,
+      "modified": r.status.modified,
+      "untracked": r.status.untracked,
+      "conflicts": r.status.conflicts,
+      "stale": r.status.stale,
+      "has_remote": r.status.has_remote,
+      "vs_trunk": trunk_rel_str(r.status.vs_trunk),
+    }),
+  );
+  m.insert(
+    "head_diff".into(),
+    json!({"added": r.head_diff.added, "removed": r.head_diff.removed}),
+  );
+  m.insert(
+    "vs_trunk".into(),
+    json!({"ahead": r.vs_trunk.ahead, "behind": r.vs_trunk.behind}),
+  );
+
+  Value::Object(m)
+}
+
+fn trunk_rel_str(rel: Option<TrunkRel>) -> Value {
+  match rel {
+    Some(TrunkRel::IsTrunk) => json!("is_trunk"),
+    Some(TrunkRel::Ancestor) => json!("ancestor"),
+    Some(TrunkRel::Diverged) => json!("diverged"),
+    Some(TrunkRel::Ahead) => json!("ahead"),
+    Some(TrunkRel::Behind) => json!("behind"),
+    Some(TrunkRel::None) | None => Value::Null,
+  }
+}
+
+/// JSON envelope for `jjwt switch`. Fields:
+/// `name` — workspace, `path` — absolute workspace path,
+/// `created` — true when the plan added a new workspace.
+pub fn format_switch_json(name: &str, path: &std::path::Path, created: bool) -> String {
+  serde_json::to_string(&json!({
+    "name": name,
+    "path": path.display().to_string(),
+    "created": created,
+  }))
+  .expect("json serialize")
+}
+
+/// JSON envelope for `jjwt remove`. Fields: `name`, `path`,
+/// `bookmark_deleted` (true when the bookmark was merged and removed).
+pub fn format_remove_json(name: &str, path: &std::path::Path, bookmark_deleted: bool) -> String {
+  serde_json::to_string(&json!({
+    "name": name,
+    "path": path.display().to_string(),
+    "bookmark_deleted": bookmark_deleted,
+  }))
+  .expect("json serialize")
 }
