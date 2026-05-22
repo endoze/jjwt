@@ -26,7 +26,10 @@ pub fn run(
   let obs = observe(&jj, &fs, cwd, None, cfg.worktree_path_template.as_deref())?;
   let args = AliasArgs { name, forwarded };
   let plan = plan_alias(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
-  let mut rt = Runtime::new(jj, fs, proc).with_root(obs.repo_root.clone());
+  let repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
+  let mut rt = Runtime::new(jj, fs, proc)
+    .with_root(obs.repo_root.clone())
+    .with_repo_id(repo_id);
 
   execute(&plan, &mut rt)?;
 

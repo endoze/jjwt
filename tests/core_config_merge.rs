@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use jjwt::core::types::*;
+use std::collections::HashMap;
 
 fn hook(key: &str, cmd: &str) -> IndexMap<String, String> {
   let mut g = IndexMap::new();
@@ -218,5 +219,203 @@ fn all_hook_groups_returns_all_types() {
       "pre-remove",
       "post-remove"
     ]
+  );
+}
+
+// ── Three-layer merge (per-project overrides) ──────────────────────────
+
+fn user_with_project_override(user_bg: Option<bool>, override_bg: Option<bool>) -> Config {
+  let mut projects = HashMap::new();
+
+  projects.insert(
+    "github.com/owner/repo".into(),
+    Config {
+      background_remove: override_bg,
+      ..Default::default()
+    },
+  );
+
+  Config {
+    background_remove: user_bg,
+    projects,
+    ..Default::default()
+  }
+}
+
+#[test]
+fn three_layer_scalars_project_wins_over_override() {
+  let user = user_with_project_override(Some(false), Some(true));
+  let project = Config {
+    background_remove: Some(false),
+    ..Default::default()
+  };
+
+  let merged = MergedConfig::from_layers_with_project_id(
+    Some(&user),
+    Some("github.com/owner/repo"),
+    Some(&project),
+  );
+
+  // project-local wins over the per-project override
+  assert_eq!(merged.background_remove, Some(false));
+}
+
+#[test]
+fn three_layer_override_wins_over_user_default() {
+  let user = user_with_project_override(Some(false), Some(true));
+
+  let merged =
+    MergedConfig::from_layers_with_project_id(Some(&user), Some("github.com/owner/repo"), None);
+
+  // per-project override wins over user default
+  assert_eq!(merged.background_remove, Some(true));
+}
+
+#[test]
+fn three_layer_unmatched_id_ignores_override() {
+  let user = user_with_project_override(Some(false), Some(true));
+
+  let merged =
+    MergedConfig::from_layers_with_project_id(Some(&user), Some("github.com/other/repo"), None);
+
+  // no matching project override → user default
+  assert_eq!(merged.background_remove, Some(false));
+}
+
+#[test]
+fn three_layer_no_project_id_ignores_override() {
+  let user = user_with_project_override(Some(false), Some(true));
+
+  let merged = MergedConfig::from_layers_with_project_id(Some(&user), None, None);
+
+  assert_eq!(merged.background_remove, Some(false));
+}
+
+#[test]
+fn three_layer_hooks_all_layers_contribute() {
+  let mut projects = HashMap::new();
+
+  projects.insert(
+    "github.com/owner/repo".into(),
+    Config {
+      pre_start: vec![hook("override-hook", "make db-start")],
+      ..Default::default()
+    },
+  );
+
+  let user = Config {
+    pre_start: vec![hook("user-hook", "npm ci")],
+    projects,
+    ..Default::default()
+  };
+
+  let project = Config {
+    pre_start: vec![hook("project-hook", "make test")],
+    ..Default::default()
+  };
+
+  let merged = MergedConfig::from_layers_with_project_id(
+    Some(&user),
+    Some("github.com/owner/repo"),
+    Some(&project),
+  );
+
+  // All three layers contribute to hooks: user + override + project
+  assert_eq!(merged.pre_start.len(), 3);
+  assert!(merged.pre_start[0].group.contains_key("user-hook"));
+  assert!(merged.pre_start[1].group.contains_key("override-hook"));
+  assert!(merged.pre_start[2].group.contains_key("project-hook"));
+}
+
+#[test]
+fn three_layer_aliases_project_overrides_override_overrides_user() {
+  let mut user_aliases = IndexMap::new();
+  user_aliases.insert("a".into(), "user-a".into());
+  user_aliases.insert("b".into(), "user-b".into());
+
+  let mut override_aliases = IndexMap::new();
+  override_aliases.insert("b".into(), "override-b".into());
+  override_aliases.insert("c".into(), "override-c".into());
+
+  let mut project_aliases = IndexMap::new();
+  project_aliases.insert("c".into(), "project-c".into());
+  project_aliases.insert("d".into(), "project-d".into());
+
+  let mut projects = HashMap::new();
+
+  projects.insert(
+    "github.com/owner/repo".into(),
+    Config {
+      aliases: override_aliases,
+      ..Default::default()
+    },
+  );
+
+  let user = Config {
+    aliases: user_aliases,
+    projects,
+    ..Default::default()
+  };
+
+  let project = Config {
+    aliases: project_aliases,
+    ..Default::default()
+  };
+
+  let merged = MergedConfig::from_layers_with_project_id(
+    Some(&user),
+    Some("github.com/owner/repo"),
+    Some(&project),
+  );
+
+  assert_eq!(merged.aliases.get("a").unwrap(), "user-a");
+  assert_eq!(merged.aliases.get("b").unwrap(), "override-b");
+  assert_eq!(merged.aliases.get("c").unwrap(), "project-c");
+  assert_eq!(merged.aliases.get("d").unwrap(), "project-d");
+  assert_eq!(merged.aliases.len(), 4);
+}
+
+#[test]
+fn three_layer_worktree_path_override_as_middle_layer() {
+  let mut projects = HashMap::new();
+
+  projects.insert(
+    "github.com/owner/repo".into(),
+    Config {
+      worktree_path_template: Some(".wt/{{ branch }}".into()),
+      ..Default::default()
+    },
+  );
+
+  let user = Config {
+    worktree_path_template: Some(".worktrees/{{ branch }}".into()),
+    projects,
+    ..Default::default()
+  };
+
+  // No project config → override wins over user default
+  let merged =
+    MergedConfig::from_layers_with_project_id(Some(&user), Some("github.com/owner/repo"), None);
+
+  assert_eq!(
+    merged.worktree_path_template.as_deref(),
+    Some(".wt/{{ branch }}")
+  );
+
+  // With project config → project wins
+  let project = Config {
+    worktree_path_template: Some(".trees/{{ branch }}".into()),
+    ..Default::default()
+  };
+
+  let merged2 = MergedConfig::from_layers_with_project_id(
+    Some(&user),
+    Some("github.com/owner/repo"),
+    Some(&project),
+  );
+
+  assert_eq!(
+    merged2.worktree_path_template.as_deref(),
+    Some(".trees/{{ branch }}")
   );
 }

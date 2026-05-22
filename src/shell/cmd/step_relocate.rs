@@ -38,7 +38,10 @@ pub fn run(
     format,
   };
   let plan = plan_relocate(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
-  let mut rt = Runtime::new(jj, fs, proc).with_root(obs.repo_root.clone());
+  let repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
+  let mut rt = Runtime::new(jj, fs, proc)
+    .with_root(obs.repo_root.clone())
+    .with_repo_id(repo_id);
   let printed = execute(&plan, &mut rt)?;
 
   for line in printed {

@@ -63,6 +63,7 @@ pub fn run(
     )?;
 
     rt.repo_root = obs.repo_root.clone();
+    rt.repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
 
     let args = RemoveArgs {
       name: name.clone(),

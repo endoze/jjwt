@@ -83,6 +83,16 @@ pub fn render(template: &str, ctx: &RenderContext) -> Result<String, CoreError> 
     data.insert(k.clone(), Value::from(v.clone()));
   }
 
+  if !ctx.vars_state.is_empty() {
+    let vars_obj: std::collections::BTreeMap<String, Value> = ctx
+      .vars_state
+      .iter()
+      .map(|(k, v)| (k.clone(), Value::from(v.clone())))
+      .collect();
+
+    data.insert("vars".into(), Value::from(vars_obj));
+  }
+
   tmpl
     .render(data)
     .map_err(|e| CoreError::TemplateRender(e.to_string()))

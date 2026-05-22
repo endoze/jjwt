@@ -10,7 +10,7 @@ use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
 use crate::shell::proc::RealProc;
 use crate::shell::runtime::{Runtime, execute as run_plan};
-use crate::shell::state::{JjwtState, load as load_state, save as save_state};
+use crate::shell::state::{load as load_state, save as save_state};
 
 /// Resolve `pr:N` by querying the GitHub CLI for the PR's head branch.
 fn resolve_pr(n: u32, cwd: &Path) -> Result<String> {
@@ -228,7 +228,10 @@ pub fn run(
     format,
   };
   let plan = plan_switch(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
-  let mut rt = Runtime::new(jj, fs, proc).with_root(obs.repo_root.clone());
+  let repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
+  let mut rt = Runtime::new(jj, fs, proc)
+    .with_root(obs.repo_root.clone())
+    .with_repo_id(repo_id);
   let printed = run_plan(&plan, &mut rt)?;
 
   for line in printed {
@@ -241,9 +244,9 @@ pub fn run(
   if let Some(prev) = current_before
     && prev != args.name
   {
-    let state = JjwtState {
-      previous_workspace: Some(prev),
-    };
+    let mut state = load_state(&obs.repo_root);
+
+    state.previous_workspace = Some(prev);
 
     let _ = save_state(&obs.repo_root, &state);
   }

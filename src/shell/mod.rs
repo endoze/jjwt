@@ -1,3 +1,5 @@
+pub mod approvals;
+pub mod ci;
 pub mod cmd;
 pub mod config_loader;
 pub mod fs;

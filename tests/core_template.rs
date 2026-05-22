@@ -119,6 +119,7 @@ fn renders_new_template_vars_when_set() {
     hook_name: Some("setup".into()),
     args: vec!["a".into(), "b".into()],
     vars: vec![],
+    vars_state: std::collections::HashMap::new(),
   };
   let tmpl = "{{ branch }}|{{ worktree_path }}|{{ worktree_name }}|{{ repo }}|{{ repo_path }}|{{ cwd }}|{{ hook_type }}|{{ hook_name }}|{{ args | length }}";
   let out = render(tmpl, &ctx).expect("render ok");
@@ -127,4 +128,35 @@ fn renders_new_template_vars_when_set() {
     out,
     "feat|/repo/.worktrees/feat|feat|repo|/repo|/repo/.worktrees/feat|pre-start|setup|2"
   );
+}
+
+#[test]
+fn renders_vars_state_as_vars_object() {
+  let mut vars_state = std::collections::HashMap::new();
+  vars_state.insert("DB_NAME".into(), "mydb".into());
+  vars_state.insert("PORT".into(), "5432".into());
+
+  let ctx = RenderContext {
+    branch: "feat".into(),
+    vars_state,
+    ..Default::default()
+  };
+
+  let out = render("{{ vars.DB_NAME }}:{{ vars.PORT }}", &ctx).expect("render ok");
+
+  assert_eq!(out, "mydb:5432");
+}
+
+#[test]
+fn vars_state_empty_does_not_inject_vars_object() {
+  let ctx = RenderContext {
+    branch: "feat".into(),
+    ..Default::default()
+  };
+
+  // When vars_state is empty, `vars` is not injected, so referencing
+  // it is an error (strict undefined behavior).
+  let result = render("{{ vars.DB_NAME }}", &ctx);
+
+  assert!(result.is_err());
 }

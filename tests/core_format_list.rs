@@ -21,6 +21,7 @@ fn row(name: &str) -> ListRow {
     commit: "00000000".into(),
     age: "9h".into(),
     message: "msg".into(),
+    ci_status: CiStatus::None,
   }
 }
 
@@ -537,4 +538,40 @@ fn styled_adaptive_preserves_alignment() {
     stripped, plain,
     "stripped styled output should equal plain output in adaptive mode"
   );
+}
+
+// ── Statusline format tests ────────────────────────────────────────────
+
+#[test]
+fn statusline_with_current_workspace() {
+  let mut r = row("feat-x");
+  r.is_current = true;
+  r.head_diff = LineDiff {
+    added: 12,
+    removed: 3,
+  };
+  r.vs_trunk = AheadBehind {
+    ahead: 2,
+    behind: 0,
+  };
+
+  let rows = vec![row("default"), r];
+  let out = jjwt::core::format::format_statusline(&rows, Some("feat-x"));
+
+  assert_eq!(out, "@feat-x +12-3 ↑2↓0 | 2 ws");
+}
+
+#[test]
+fn statusline_no_current_workspace() {
+  let rows = vec![row("default"), row("feat-a")];
+  let out = jjwt::core::format::format_statusline(&rows, None);
+
+  assert_eq!(out, "@? | 2 ws");
+}
+
+#[test]
+fn statusline_empty_rows() {
+  let out = jjwt::core::format::format_statusline(&[], None);
+
+  assert_eq!(out, "@? | 0 ws");
 }

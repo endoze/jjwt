@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -82,6 +83,11 @@ pub struct Config {
   pub aliases: IndexMap<String, String>,
   #[serde(rename = "worktree-path", default)]
   pub worktree_path_template: Option<String>,
+  /// Per-project overrides in the user config. Keyed by repo identity
+  /// (e.g. `github.com/owner/repo`). Only meaningful in user config;
+  /// ignored in project config.
+  #[serde(default)]
+  pub projects: HashMap<String, Config>,
 }
 
 impl Config {
@@ -169,6 +175,30 @@ impl MergedConfig {
     }
   }
 
+  /// Merge with a per-project override layer from the user config.
+  ///
+  /// Merge order: user defaults (excluding `projects`) → matching
+  /// `projects` entry → project `.config/wt.toml`. The project override
+  /// acts as a middle layer: it overrides user defaults but is itself
+  /// overridden by the project-local config.
+  pub fn from_layers_with_project_id(
+    user: Option<&Config>,
+    project_id: Option<&str>,
+    project: Option<&Config>,
+  ) -> Self {
+    let project_override = user.zip(project_id).and_then(|(u, id)| u.projects.get(id));
+
+    match project_override {
+      Some(po) => {
+        let base = Self::from_layers(user, Some(po));
+        let base_cfg = base.to_config_lossy();
+
+        Self::from_layers(Some(&base_cfg), project)
+      }
+      None => Self::from_layers(user, project),
+    }
+  }
+
   /// Wrap a single `Config` as all-`Project`-sourced. Convenience for
   /// callers that don't need layering (and for migrating existing tests).
   pub fn from_project(cfg: Config) -> Self {
@@ -185,6 +215,29 @@ impl MergedConfig {
       ("pre-remove", self.pre_remove.as_slice()),
       ("post-remove", self.post_remove.as_slice()),
     ]
+  }
+
+  /// Convert back to a plain `Config`, discarding source provenance.
+  /// Used internally for multi-layer merges where the intermediate
+  /// result feeds into another `from_layers` call.
+  fn to_config_lossy(&self) -> Config {
+    let extract = |groups: &[SourcedHookGroup]| -> Vec<HookGroup> {
+      groups.iter().map(|shg| shg.group.clone()).collect()
+    };
+
+    Config {
+      list: self.list.clone(),
+      pre_switch: extract(&self.pre_switch),
+      post_switch: extract(&self.post_switch),
+      pre_start: extract(&self.pre_start),
+      post_start: extract(&self.post_start),
+      pre_remove: extract(&self.pre_remove),
+      post_remove: extract(&self.post_remove),
+      background_remove: self.background_remove,
+      aliases: self.aliases.clone(),
+      worktree_path_template: self.worktree_path_template.clone(),
+      projects: HashMap::new(),
+    }
   }
 
   fn merge_hooks(user: &[HookGroup], project: &[HookGroup]) -> Vec<SourcedHookGroup> {
@@ -239,6 +292,9 @@ pub struct RenderContext {
   pub args: Vec<String>,
   /// Extra variables from `--var KEY=VAL`.
   pub vars: Vec<(String, String)>,
+  /// Per-workspace persistent variables (from `.jj/jjwt-state.toml`).
+  /// Accessible in templates as `{{ vars.KEY }}`.
+  pub vars_state: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,6 +403,8 @@ pub enum OutputFormat {
   #[default]
   Text,
   Json,
+  /// Compact one-line summary for status displays (e.g. Claude Code).
+  Statusline,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -500,6 +558,27 @@ pub struct WorkspaceDetails {
   pub head_removed: u32,
 }
 
+/// CI check status for a workspace's bookmark, queried from gh/glab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CiStatus {
+  Pass,
+  Fail,
+  Pending,
+  #[default]
+  None,
+}
+
+impl fmt::Display for CiStatus {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      CiStatus::Pass => f.write_str("pass"),
+      CiStatus::Fail => f.write_str("fail"),
+      CiStatus::Pending => f.write_str("pending"),
+      CiStatus::None => f.write_str("none"),
+    }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedListRow {
   pub workspace: Workspace,
@@ -509,6 +588,9 @@ pub struct ObservedListRow {
   /// True when the bookmark for this workspace has a remote-tracking
   /// variant (e.g. `<name>@origin`).
   pub has_remote_bookmark: bool,
+  /// CI check status from forge CLI (gh/glab). Only populated when
+  /// `--full` is used.
+  pub ci_status: CiStatus,
 }
 
 /// State for the prune command: all workspaces with their merge status.
@@ -596,4 +678,6 @@ pub struct ListRow {
   pub age: String,
   /// First line of `@`'s description.
   pub message: String,
+  /// CI check status from forge CLI.
+  pub ci_status: CiStatus,
 }

@@ -1,4 +1,6 @@
-use crate::core::types::{AheadBehind, LineDiff, ListRow, ListRowKind, StatusFlags, TrunkRel};
+use crate::core::types::{
+  AheadBehind, CiStatus, LineDiff, ListRow, ListRowKind, StatusFlags, TrunkRel,
+};
 use anstyle::{AnsiColor, Color, Style};
 use serde_json::{Map, Value, json};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -9,7 +11,7 @@ const GUTTER_WIDTH: usize = 2;
 const EMPTY_PENALTY: u8 = 10;
 
 const HEADERS: &[&str] = &[
-  "Branch", "Status", "HEAD±", "main↕", "Path", "URL", "Commit", "Age", "Message",
+  "Branch", "Status", "HEAD±", "main↕", "CI", "Path", "URL", "Commit", "Age", "Message",
 ];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -27,7 +29,7 @@ struct ColSpec {
   truncatable: bool,
 }
 
-const COL_SPECS: [ColSpec; 9] = [
+const COL_SPECS: [ColSpec; 10] = [
   // Branch
   ColSpec {
     priority: 1,
@@ -62,6 +64,15 @@ const COL_SPECS: [ColSpec; 9] = [
     min_width: None,
     max_width: None,
     align: Align::Right,
+    truncatable: false,
+  },
+  // CI
+  ColSpec {
+    priority: 5,
+    shrinkable: false,
+    min_width: None,
+    max_width: None,
+    align: Align::Left,
     truncatable: false,
   },
   // Path
@@ -238,7 +249,7 @@ pub fn format_list_table(rows: &[ListRow], styled: bool, term_width: Option<u16>
   out.push(' ');
   out.push(' '); // gutter (1) + separator (1)
 
-  let header_cells: [Cell; 9] = std::array::from_fn(|i| {
+  let header_cells: [Cell; 10] = std::array::from_fn(|i| {
     let h = HEADERS[i].to_string();
 
     if styled {
@@ -265,7 +276,7 @@ pub fn format_list_table(rows: &[ListRow], styled: bool, term_width: Option<u16>
   out
 }
 
-fn push_columns(out: &mut String, cells: &[Cell; 9], widths: &[usize; 9], visible: &[bool; 9]) {
+fn push_columns(out: &mut String, cells: &[Cell; 10], widths: &[usize; 10], visible: &[bool; 10]) {
   let mut first = true;
 
   for (i, cell) in cells.iter().enumerate() {
@@ -278,7 +289,7 @@ fn push_columns(out: &mut String, cells: &[Cell; 9], widths: &[usize; 9], visibl
     }
 
     first = false;
-    let is_last_visible = (i + 1..9).all(|j| !visible[j]);
+    let is_last_visible = (i + 1..10).all(|j| !visible[j]);
     let pad = widths[i].saturating_sub(cell.width());
 
     if COL_SPECS[i].align == Align::Right {
@@ -303,11 +314,11 @@ fn push_columns(out: &mut String, cells: &[Cell; 9], widths: &[usize; 9], visibl
   }
 }
 
-fn build_cells(rows: &[ListRow], styled: bool) -> Vec<[Cell; 9]> {
+fn build_cells(rows: &[ListRow], styled: bool) -> Vec<[Cell; 10]> {
   rows.iter().map(|r| build_row_cells(r, styled)).collect()
 }
 
-fn build_row_cells(r: &ListRow, styled: bool) -> [Cell; 9] {
+fn build_row_cells(r: &ListRow, styled: bool) -> [Cell; 10] {
   // Worktrunk dims rows that "should dim" (typically non-current). We
   // dim non-current rows' branch/path; commit/age/url/message are always
   // dim (metadata).
@@ -323,6 +334,7 @@ fn build_row_cells(r: &ListRow, styled: bool) -> [Cell; 9] {
     status_cell(&r.status, styled),
     head_diff_cell(&r.head_diff, styled),
     ahead_behind_cell(&r.vs_trunk, styled),
+    ci_status_cell(r.ci_status, styled),
     text_cell(&format_path(r), None),
     text_cell(&r.url, dim_if_styled),
     text_cell(&r.commit, dim_if_styled),
@@ -341,9 +353,9 @@ fn text_cell(s: &str, style: Option<Style>) -> Cell {
 /// Compute column widths and a visibility mask. When `term_width` is
 /// `None`, every column gets its ideal (natural) width. When `Some`,
 /// columns are dropped by priority, shrunk, and capped to fit.
-fn compute_widths(cells: &[[Cell; 9]], term_width: Option<u16>) -> ([usize; 9], [bool; 9]) {
+fn compute_widths(cells: &[[Cell; 10]], term_width: Option<u16>) -> ([usize; 10], [bool; 10]) {
   // Phase 1: compute ideal (natural) widths — max of header and all cells.
-  let mut ideal = [0usize; 9];
+  let mut ideal = [0usize; 10];
 
   for (i, h) in HEADERS.iter().enumerate() {
     ideal[i] = h.width();
@@ -361,11 +373,11 @@ fn compute_widths(cells: &[[Cell; 9]], term_width: Option<u16>) -> ([usize; 9], 
 
   let term_width = match term_width {
     Some(w) => w as usize,
-    None => return (ideal, [true; 9]),
+    None => return (ideal, [true; 10]),
   };
 
   // Phase 2: compute effective priorities (empty columns get a penalty).
-  let mut priorities: [(u8, usize); 9] = std::array::from_fn(|i| {
+  let mut priorities: [(u8, usize); 10] = std::array::from_fn(|i| {
     let base = COL_SPECS[i].priority;
     let all_empty = cells.iter().all(|row| row[i].width() == 0);
 
@@ -382,8 +394,8 @@ fn compute_widths(cells: &[[Cell; 9]], term_width: Option<u16>) -> ([usize; 9], 
   priorities.sort_by_key(|&(p, _)| p);
 
   // Phase 3: allocate in priority order.
-  let mut widths = [0usize; 9];
-  let mut visible = [false; 9];
+  let mut widths = [0usize; 10];
+  let mut visible = [false; 10];
   let budget = term_width.saturating_sub(GUTTER_WIDTH);
   let mut remaining = budget;
 
@@ -429,7 +441,7 @@ fn compute_widths(cells: &[[Cell; 9]], term_width: Option<u16>) -> ([usize; 9], 
 
   // Phase 4: distribute remaining space to Message (the most useful
   // flexible column), up to its max_width.
-  let msg_idx = 8;
+  let msg_idx = 9;
 
   if visible[msg_idx] && remaining > 0 {
     let max = COL_SPECS[msg_idx].max_width.unwrap_or(usize::MAX);
@@ -626,6 +638,39 @@ fn ahead_behind_cell(ab: &AheadBehind, styled: bool) -> Cell {
   Cell::styled(plain, display)
 }
 
+fn ci_status_cell(ci: CiStatus, styled: bool) -> Cell {
+  match ci {
+    CiStatus::None => Cell::raw(String::new()),
+    CiStatus::Pass => {
+      let plain = "✓".to_string();
+
+      if styled {
+        Cell::styled(plain, wrap("✓", GREEN))
+      } else {
+        Cell::raw(plain)
+      }
+    }
+    CiStatus::Fail => {
+      let plain = "✗".to_string();
+
+      if styled {
+        Cell::styled(plain, wrap("✗", RED))
+      } else {
+        Cell::raw(plain)
+      }
+    }
+    CiStatus::Pending => {
+      let plain = "◌".to_string();
+
+      if styled {
+        Cell::styled(plain, wrap("◌", YELLOW))
+      } else {
+        Cell::raw(plain)
+      }
+    }
+  }
+}
+
 /// Compact notation for sign-style diffs (HEAD±). Values 0–999 are
 /// literal, 1000–9999 become `NK`, 10000+ become `∞`.
 fn compact_signs(value: u32) -> (String, bool) {
@@ -799,6 +844,7 @@ fn list_row_json(r: &ListRow) -> Value {
     "vs_trunk".into(),
     json!({"ahead": r.vs_trunk.ahead, "behind": r.vs_trunk.behind}),
   );
+  m.insert("ci_status".into(), Value::String(r.ci_status.to_string()));
 
   Value::Object(m)
 }
@@ -835,4 +881,32 @@ pub fn format_remove_json(name: &str, path: &std::path::Path, bookmark_deleted: 
     "bookmark_deleted": bookmark_deleted,
   }))
   .expect("json serialize")
+}
+
+/// Compact one-line summary of workspaces for status display integrations.
+///
+/// Format: `@<current> +A-R ↑H↓B | N ws` where:
+/// - `<current>` is the current workspace name (or `?` if none)
+/// - `+A-R` is the HEAD diff (lines added/removed)
+/// - `↑H↓B` is ahead/behind trunk
+/// - `N ws` is the total workspace count
+pub fn format_statusline(rows: &[ListRow], current: Option<&str>) -> String {
+  let total = rows.len();
+
+  let current_row = current.and_then(|name| rows.iter().find(|r| r.name == name));
+
+  match current_row {
+    Some(row) => {
+      let name = &row.name;
+      let added = row.head_diff.added;
+      let removed = row.head_diff.removed;
+      let ahead = row.vs_trunk.ahead;
+      let behind = row.vs_trunk.behind;
+
+      format!("@{name} +{added}-{removed} ↑{ahead}↓{behind} | {total} ws")
+    }
+    None => {
+      format!("@? | {total} ws")
+    }
+  }
 }

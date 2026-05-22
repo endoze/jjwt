@@ -65,6 +65,7 @@ sentinel = "echo {{ branch }} > sentinel.txt"
     .arg("-C")
     .arg(repo)
     .args(["switch", "test-branch", "--create"])
+    .env("JJWT_TRUST_PROJECT_HOOKS", "1")
     .output()
     .unwrap();
 

@@ -3,7 +3,7 @@ source: tests/core_format_list.rs
 assertion_line: 94
 expression: out
 ---
-  Branch   Status  HEAD±  main↕  Path  URL  Commit    Age  Message
-@ default      ^|                .          5f1e03db  9h   fix(deps): bump
+  Branch   Status  HEAD±  main↕  CI  Path  URL  Commit    Age  Message
+@ default      ^|                    .          5f1e03db  9h   fix(deps): bump
 
 ○ Showing 1 worktree

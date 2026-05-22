@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 
-use crate::core::types::{Action, Plan};
+use crate::core::types::{Action, HookSource, Plan};
 use crate::shell::fs::Fs;
 use crate::shell::jj::Jj;
 use crate::shell::proc::Proc;
@@ -10,6 +10,11 @@ pub struct Runtime<J: Jj, F: Fs, P: Proc> {
   pub fs: F,
   pub proc: P,
   pub repo_root: std::path::PathBuf,
+  /// Repo identity for approval lookups (e.g. `github.com/owner/repo`).
+  pub repo_id: Option<String>,
+  /// Whether the session is interactive (TTY attached). When false,
+  /// unapproved project hooks error instead of prompting.
+  pub interactive: bool,
 }
 
 impl<J: Jj, F: Fs, P: Proc> Runtime<J, F, P> {
@@ -19,11 +24,19 @@ impl<J: Jj, F: Fs, P: Proc> Runtime<J, F, P> {
       fs,
       proc,
       repo_root: std::path::PathBuf::from("."),
+      repo_id: None,
+      interactive: std::io::IsTerminal::is_terminal(&std::io::stdin()),
     }
   }
 
   pub fn with_root(mut self, root: std::path::PathBuf) -> Self {
     self.repo_root = root;
+
+    self
+  }
+
+  pub fn with_repo_id(mut self, id: Option<String>) -> Self {
+    self.repo_id = id;
 
     self
   }
@@ -83,8 +96,12 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         rendered_cmd,
         cwd,
         env,
-        ..
+        source,
       } => {
+        if *source == HookSource::Project {
+          check_approval(rt, name, rendered_cmd)?;
+        }
+
         let out = rt.proc.run_sh(rendered_cmd, cwd, env)?;
 
         if out.status != 0 {
@@ -114,4 +131,46 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
   }
 
   Ok(printed)
+}
+
+/// Check whether a project-sourced hook command is approved. If not,
+/// prompt the user (interactive) or error (non-interactive). Approved
+/// commands are persisted for future runs.
+///
+/// Set `JJWT_TRUST_PROJECT_HOOKS=1` to skip approval checks entirely
+/// (useful in CI, testing, and scripted environments).
+fn check_approval<J: Jj, F: Fs, P: Proc>(
+  rt: &Runtime<J, F, P>,
+  hook_name: &str,
+  rendered_cmd: &str,
+) -> Result<()> {
+  use crate::shell::approvals;
+
+  if std::env::var("JJWT_TRUST_PROJECT_HOOKS").as_deref() == Ok("1") {
+    return Ok(());
+  }
+
+  let repo_id = match rt.repo_id.as_deref() {
+    Some(id) => id,
+    None => return Ok(()),
+  };
+
+  if approvals::is_approved(repo_id, rendered_cmd) {
+    return Ok(());
+  }
+
+  if !rt.interactive {
+    anyhow::bail!(
+      "project hook '{hook_name}' requires approval but session is not interactive \
+       (run interactively to approve, or pre-approve the command)"
+    );
+  }
+
+  if approvals::prompt_approval(hook_name, rendered_cmd)? {
+    approvals::save_approval(repo_id, rendered_cmd)?;
+
+    Ok(())
+  } else {
+    anyhow::bail!("hook '{hook_name}' denied by user")
+  }
 }

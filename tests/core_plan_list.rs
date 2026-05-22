@@ -49,6 +49,7 @@ fn obs_with_workspaces() -> ObservedListState {
         ahead: 0,
         behind: 0,
         has_remote_bookmark: false,
+        ci_status: CiStatus::None,
       },
       ObservedListRow {
         workspace: Workspace {
@@ -60,6 +61,7 @@ fn obs_with_workspaces() -> ObservedListState {
         ahead: 3,
         behind: 1,
         has_remote_bookmark: true,
+        ci_status: CiStatus::None,
       },
     ],
   }

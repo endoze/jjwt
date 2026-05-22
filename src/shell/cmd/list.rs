@@ -23,7 +23,18 @@ pub fn run(
   let fs = RealFs;
   let proc = RealProc;
 
-  let obs = observe_list(&jj, &fs, cwd, opts)?;
+  let mut obs = observe_list(&jj, &fs, cwd, opts)?;
+
+  if opts.full {
+    let bookmarks: Vec<String> = obs.rows.iter().map(|r| r.workspace.name.clone()).collect();
+    let ci_map = crate::shell::ci::query_ci_statuses(&obs.repo_root, &bookmarks);
+
+    for row in &mut obs.rows {
+      if let Some(&status) = ci_map.get(&row.workspace.name) {
+        row.ci_status = status;
+      }
+    }
+  }
 
   // JSON output is machine-readable; never style it. Text output styles
   // only when stdout is a real terminal and the user hasn't opted out.
@@ -45,7 +56,7 @@ pub fn run(
         print!("{line}");
       }
     }
-    OutputFormat::Json => {
+    OutputFormat::Json | OutputFormat::Statusline => {
       for line in printed {
         println!("{line}");
       }

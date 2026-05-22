@@ -1,7 +1,9 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::core::types::{ObservedListRow, ObservedListState, ObservedState, WorkspaceDetails};
+use crate::core::types::{
+  CiStatus, ObservedListRow, ObservedListState, ObservedState, WorkspaceDetails,
+};
 use crate::shell::fs::Fs;
 use crate::shell::jj::Jj;
 
@@ -178,6 +180,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
       ahead,
       behind,
       has_remote_bookmark,
+      ci_status: CiStatus::None,
     });
   }
 

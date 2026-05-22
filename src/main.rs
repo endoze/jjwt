@@ -10,6 +10,7 @@ enum OutputFormat {
   #[default]
   Text,
   Json,
+  Statusline,
 }
 
 impl From<OutputFormat> for CoreOutputFormat {
@@ -17,6 +18,7 @@ impl From<OutputFormat> for CoreOutputFormat {
     match o {
       OutputFormat::Text => CoreOutputFormat::Text,
       OutputFormat::Json => CoreOutputFormat::Json,
+      OutputFormat::Statusline => CoreOutputFormat::Statusline,
     }
   }
 }
@@ -103,6 +105,43 @@ enum StepSub {
     /// Extra arguments forwarded to `jj diff`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
+  },
+  /// Interactive workspace picker with preview.
+  Pick,
+  /// Copy jj-ignored files from one workspace to another (CoW reflink when available).
+  CopyIgnored {
+    /// Source workspace name.
+    source: String,
+    /// Destination workspace name (defaults to current workspace).
+    dest: Option<String>,
+  },
+  /// Manage per-workspace variables (stored in `.jj/jjwt-state.toml`).
+  Var {
+    #[command(subcommand)]
+    sub: VarSub,
+  },
+}
+
+#[derive(Subcommand)]
+enum VarSub {
+  /// Set a variable for the current workspace.
+  Set {
+    /// Variable name.
+    key: String,
+    /// Variable value.
+    value: String,
+  },
+  /// Get a variable for the current workspace.
+  Get {
+    /// Variable name.
+    key: String,
+  },
+  /// List all variables for the current workspace.
+  List,
+  /// Delete a variable for the current workspace.
+  Delete {
+    /// Variable name.
+    key: String,
   },
 }
 
@@ -338,6 +377,16 @@ fn main() -> Result<()> {
 
         std::process::exit(code);
       }
+      StepSub::Pick => cmd::step_pick::run(cwd),
+      StepSub::CopyIgnored { source, dest } => {
+        cmd::step_copy_ignored::run(cwd, &source, dest.as_deref())
+      }
+      StepSub::Var { sub } => match sub {
+        VarSub::Set { key, value } => cmd::step_var::run_set(cwd, &key, &value),
+        VarSub::Get { key } => cmd::step_var::run_get(cwd, &key),
+        VarSub::List => cmd::step_var::run_list(cwd),
+        VarSub::Delete { key } => cmd::step_var::run_delete(cwd, &key),
+      },
     },
     Cmd::External(parts) => {
       let mut it = parts.into_iter();

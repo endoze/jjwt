@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Tiny persistent state for jjwt, stored at `.jj/jjwt-state.toml`. Lives
@@ -12,6 +13,42 @@ pub struct JjwtState {
   /// successful `jjwt switch`. Powers the `-` shortcut.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub previous_workspace: Option<String>,
+  /// Per-workspace key-value variables. Outer key is workspace name,
+  /// inner map is key-value pairs. Accessible in hook templates as
+  /// `{{ vars.KEY }}`.
+  #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+  pub vars: HashMap<String, HashMap<String, String>>,
+}
+
+impl JjwtState {
+  /// Get the variables for a workspace (empty map if none set).
+  pub fn get_vars(&self, workspace: &str) -> &HashMap<String, String> {
+    static EMPTY: std::sync::LazyLock<HashMap<String, String>> =
+      std::sync::LazyLock::new(HashMap::new);
+
+    self.vars.get(workspace).unwrap_or(&EMPTY)
+  }
+
+  /// Set a variable for a workspace.
+  pub fn set_var(&mut self, workspace: &str, key: &str, val: &str) {
+    self
+      .vars
+      .entry(workspace.to_string())
+      .or_default()
+      .insert(key.to_string(), val.to_string());
+  }
+
+  /// Remove a variable for a workspace. Returns the removed value.
+  pub fn remove_var(&mut self, workspace: &str, key: &str) -> Option<String> {
+    let ws_vars = self.vars.get_mut(workspace)?;
+    let removed = ws_vars.remove(key);
+
+    if ws_vars.is_empty() {
+      self.vars.remove(workspace);
+    }
+
+    removed
+  }
 }
 
 fn state_path(repo_root: &Path) -> PathBuf {

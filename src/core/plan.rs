@@ -1,6 +1,7 @@
 use crate::core::format::{format_age, format_list_json, format_list_table, format_remove_json};
 use crate::core::template::render;
 use crate::core::types::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn workspace_path(root: &Path, name: &str, template: Option<&str>) -> Result<PathBuf, CoreError> {
@@ -62,6 +63,7 @@ fn render_ctx(
     hook_name: Some(hook_name.into()),
     args: Vec::new(),
     vars: Vec::new(),
+    vars_state: HashMap::new(),
   }
 }
 
@@ -340,7 +342,7 @@ fn emit_switch_output(
         serde_json::to_string(&serde_json::Value::Object(obj)).expect("json"),
       ));
     }
-    OutputFormat::Text => {
+    OutputFormat::Text | OutputFormat::Statusline => {
       if let Some(cmd) = rendered_exec {
         plan.push(Action::PrintLine(format!("cd:{}", ws_path.display())));
         plan.push(Action::PrintLine(format!("exec:{cmd}")));
@@ -501,6 +503,7 @@ pub fn plan_alias(
     hook_name: Some(args.name.clone()),
     args: args.forwarded.clone(),
     vars: Vec::new(),
+    vars_state: HashMap::new(),
   };
   let rendered = render(tmpl, &ctx)?;
   let mut plan = Plan::new();
@@ -646,7 +649,7 @@ pub fn plan_relocate(
         serde_json::to_string(&serde_json::Value::Object(obj)).expect("json"),
       ));
     }
-    OutputFormat::Text => {
+    OutputFormat::Text | OutputFormat::Statusline => {
       plan.push(Action::PrintLine(format!(
         "Relocated '{}' → '{}'",
         args.old_name, args.new_name
@@ -751,7 +754,7 @@ pub fn plan_prune(
         .expect("json"),
       ));
     }
-    OutputFormat::Text => {
+    OutputFormat::Text | OutputFormat::Statusline => {
       if pruned.is_empty() {
         plan.push(Action::PrintLine("Nothing to prune.".into()));
       } else if args.dry_run {
@@ -844,6 +847,7 @@ fn build_list_row(
     commit: d.commit_short.clone(),
     age: format_age(d.age_seconds),
     message: d.message_first_line.clone(),
+    ci_status: obs_row.ci_status,
   })
 }
 
@@ -864,6 +868,7 @@ fn build_branch_row(name: &str) -> ListRow {
     commit: String::new(),
     age: String::new(),
     message: String::new(),
+    ci_status: CiStatus::None,
   }
 }
 
@@ -897,9 +902,12 @@ pub fn plan_list(
 
   let mut plan = Plan::new();
 
+  let current = obs.current_workspace.as_deref();
+
   let body = match format {
     OutputFormat::Text => format_list_table(&rows, display.styled, display.term_width),
     OutputFormat::Json => format_list_json(&rows),
+    OutputFormat::Statusline => crate::core::format::format_statusline(&rows, current),
   };
 
   plan.push(Action::PrintLine(body));
@@ -1054,6 +1062,13 @@ pub fn plan_hook_show(
       }
 
       plan.push(Action::PrintLine(lines.join("\n")));
+    }
+    OutputFormat::Statusline => {
+      // Statusline not meaningful for hook show; fall back to text count.
+      plan.push(Action::PrintLine(format!(
+        "{} hook(s) configured",
+        entries.len()
+      )));
     }
   }
 
