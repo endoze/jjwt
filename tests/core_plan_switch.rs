@@ -353,3 +353,82 @@ fn switch_trunk_bookmark_name_routes_to_default_workspace() {
     )]
   );
 }
+
+#[test]
+fn create_with_custom_worktree_path_template() {
+  let cfg = Config {
+    worktree_path_template: Some(".wt/{{ branch }}".into()),
+    ..Default::default()
+  };
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let add_path = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { path, .. } => Some(path.clone()),
+    _ => None,
+  });
+
+  assert_eq!(add_path, Some(PathBuf::from("/repo/.wt/feat-x")));
+}
+
+#[test]
+fn create_without_template_uses_default_worktrees_dir() {
+  let cfg = Config::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let add_path = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { path, .. } => Some(path.clone()),
+    _ => None,
+  });
+
+  assert_eq!(add_path, Some(PathBuf::from("/repo/.worktrees/feat-x")));
+}
+
+#[test]
+fn create_with_template_using_filters() {
+  let cfg = Config {
+    worktree_path_template: Some(".wt/{{ branch | sanitize }}".into()),
+    ..Default::default()
+  };
+  let args = SwitchArgs {
+    name: "feat/x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let add_path = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { path, .. } => Some(path.clone()),
+    _ => None,
+  });
+
+  // sanitize replaces `/` with `-`
+  assert_eq!(add_path, Some(PathBuf::from("/repo/.wt/feat-x")));
+}

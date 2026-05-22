@@ -3,11 +3,21 @@ use crate::core::template::render;
 use crate::core::types::*;
 use std::path::{Path, PathBuf};
 
-fn workspace_path(root: &Path, name: &str) -> PathBuf {
+fn workspace_path(root: &Path, name: &str, template: Option<&str>) -> Result<PathBuf, CoreError> {
   if name == "default" {
-    root.to_path_buf()
+    return Ok(root.to_path_buf());
+  }
+
+  if let Some(tmpl) = template {
+    let ctx = RenderContext {
+      branch: name.into(),
+      ..Default::default()
+    };
+    let rendered = render(tmpl, &ctx)?;
+
+    Ok(root.join(rendered))
   } else {
-    root.join(".worktrees").join(name)
+    Ok(root.join(".worktrees").join(name))
   }
 }
 
@@ -113,7 +123,11 @@ pub fn plan_switch(
       return Err(CoreError::WorkspaceExists(args.name.clone()));
     }
 
-    let ws_path = workspace_path(&obs.repo_root, &args.name);
+    let ws_path = workspace_path(
+      &obs.repo_root,
+      &args.name,
+      cfg.worktree_path_template.as_deref(),
+    )?;
 
     // Stale directory at the target — usually leftover from an
     // interrupted `jj workspace add`. Require `--clobber` to consent to
@@ -385,9 +399,16 @@ pub fn plan_remove(
   plan.push(Action::JjWorkspaceForget {
     name: args.name.clone(),
   });
-  plan.push(Action::DeleteDir {
-    path: ws_path.clone(),
-  });
+
+  if cfg.background_remove == Some(true) {
+    plan.push(Action::DeleteDirBackground {
+      path: ws_path.clone(),
+    });
+  } else {
+    plan.push(Action::DeleteDir {
+      path: ws_path.clone(),
+    });
+  }
 
   // Delete the bookmark when:
   //   - it exists,
@@ -530,6 +551,206 @@ pub fn plan_hook(cfg: &Config, args: &HookArgs, obs: &ObservedState) -> Result<P
   Ok(plan)
 }
 
+pub fn plan_relocate(
+  cfg: &Config,
+  args: &RelocateArgs,
+  obs: &ObservedState,
+) -> Result<Plan, CoreError> {
+  if !obs.is_jj_repo {
+    return Err(CoreError::NotJjRepo);
+  }
+
+  let ws = obs
+    .workspaces
+    .iter()
+    .find(|w| w.name == args.old_name)
+    .ok_or_else(|| CoreError::WorkspaceMissing(args.old_name.clone()))?;
+
+  if obs.workspaces.iter().any(|w| w.name == args.new_name) {
+    return Err(CoreError::WorkspaceExists(args.new_name.clone()));
+  }
+
+  let old_path = ws.path.clone();
+  let new_path = workspace_path(
+    &obs.repo_root,
+    &args.new_name,
+    cfg.worktree_path_template.as_deref(),
+  )?;
+
+  let mut plan = Plan::new();
+
+  plan.push(Action::JjWorkspaceRename {
+    old_name: args.old_name.clone(),
+    new_name: args.new_name.clone(),
+  });
+  plan.push(Action::RenameDir {
+    from: old_path.clone(),
+    to: new_path.clone(),
+  });
+
+  if args.rename_bookmark {
+    plan.push(Action::JjBookmarkRename {
+      old_name: args.old_name.clone(),
+      new_name: args.new_name.clone(),
+    });
+  }
+
+  match args.format {
+    OutputFormat::Json => {
+      let mut obj = serde_json::Map::new();
+
+      obj.insert(
+        "old_name".into(),
+        serde_json::Value::String(args.old_name.clone()),
+      );
+      obj.insert(
+        "new_name".into(),
+        serde_json::Value::String(args.new_name.clone()),
+      );
+      obj.insert(
+        "old_path".into(),
+        serde_json::Value::String(old_path.display().to_string()),
+      );
+      obj.insert(
+        "new_path".into(),
+        serde_json::Value::String(new_path.display().to_string()),
+      );
+      obj.insert(
+        "bookmark_renamed".into(),
+        serde_json::Value::Bool(args.rename_bookmark),
+      );
+
+      plan.push(Action::PrintLine(
+        serde_json::to_string(&serde_json::Value::Object(obj)).expect("json"),
+      ));
+    }
+    OutputFormat::Text => {
+      plan.push(Action::PrintLine(format!(
+        "Relocated '{}' → '{}'",
+        args.old_name, args.new_name
+      )));
+    }
+  }
+
+  Ok(plan)
+}
+
+pub fn plan_prune(
+  cfg: &Config,
+  args: &PruneArgs,
+  obs: &ObservedPruneState,
+) -> Result<Plan, CoreError> {
+  if !obs.is_jj_repo {
+    return Err(CoreError::NotJjRepo);
+  }
+
+  let mut plan = Plan::new();
+  let mut pruned: Vec<String> = Vec::new();
+
+  for (name, bm_exists, bm_merged, _dirty) in &obs.workspace_status {
+    // Skip default workspace and current workspace.
+    if name == "default" {
+      continue;
+    }
+
+    if obs.current_workspace.as_deref() == Some(name.as_str()) {
+      continue;
+    }
+
+    // Only prune if the bookmark is merged into trunk.
+    if !bm_exists || !bm_merged {
+      continue;
+    }
+
+    let ws = match obs.workspaces.iter().find(|w| &w.name == name) {
+      Some(w) => w,
+      None => continue,
+    };
+
+    if args.dry_run {
+      pruned.push(name.clone());
+
+      continue;
+    }
+
+    // Emit the same actions as plan_remove for each merged workspace.
+    for a in render_hook_group_if(
+      !args.no_hooks,
+      &cfg.pre_remove,
+      "pre-remove",
+      name,
+      &ws.path,
+      &obs.repo_root,
+    )? {
+      plan.push(a);
+    }
+
+    plan.push(Action::JjWorkspaceForget { name: name.clone() });
+
+    if cfg.background_remove == Some(true) {
+      plan.push(Action::DeleteDirBackground {
+        path: ws.path.clone(),
+      });
+    } else {
+      plan.push(Action::DeleteDir {
+        path: ws.path.clone(),
+      });
+    }
+
+    plan.push(Action::JjBookmarkDelete { name: name.clone() });
+
+    for a in render_hook_group_if(
+      !args.no_hooks,
+      &cfg.post_remove,
+      "post-remove",
+      name,
+      &obs.repo_root,
+      &obs.repo_root,
+    )? {
+      plan.push(a);
+    }
+
+    pruned.push(name.clone());
+  }
+
+  // Output.
+  match args.format {
+    OutputFormat::Json => {
+      let items: Vec<serde_json::Value> = pruned
+        .iter()
+        .map(|n| serde_json::Value::String(n.clone()))
+        .collect();
+
+      plan.push(Action::PrintLine(
+        serde_json::to_string(&serde_json::json!({
+          "dry_run": args.dry_run,
+          "pruned": items,
+        }))
+        .expect("json"),
+      ));
+    }
+    OutputFormat::Text => {
+      if pruned.is_empty() {
+        plan.push(Action::PrintLine("Nothing to prune.".into()));
+      } else if args.dry_run {
+        plan.push(Action::PrintLine(format!(
+          "Would prune {} workspace(s): {}",
+          pruned.len(),
+          pruned.join(", ")
+        )));
+      } else {
+        plan.push(Action::PrintLine(format!(
+          "Pruned {} workspace(s): {}",
+          pruned.len(),
+          pruned.join(", ")
+        )));
+      }
+    }
+  }
+
+  Ok(plan)
+}
+
 fn trunk_rel(ahead: u32, behind: u32) -> Option<TrunkRel> {
   match (ahead, behind) {
     (0, 0) => Some(TrunkRel::IsTrunk),
@@ -662,4 +883,165 @@ pub fn plan_list(
   plan.push(Action::PrintLine(body));
 
   Ok(plan)
+}
+
+pub fn plan_hook_show(
+  cfg: &Config,
+  expanded: bool,
+  obs: Option<&ObservedState>,
+  format: OutputFormat,
+) -> Result<Plan, CoreError> {
+  let mut plan = Plan::new();
+
+  // Gather all hooks across all types.
+  let mut entries: Vec<(&str, &str, &str)> = Vec::new(); // (type, name, template)
+
+  for (hook_type, groups) in cfg.all_hook_groups() {
+    for group in groups {
+      for (name, tmpl) in group {
+        entries.push((hook_type, name.as_str(), tmpl.as_str()));
+      }
+    }
+  }
+
+  if entries.is_empty() {
+    plan.push(Action::PrintLine("No hooks configured.".into()));
+
+    return Ok(plan);
+  }
+
+  match format {
+    OutputFormat::Json => {
+      let items: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|(hook_type, name, tmpl)| {
+          let mut obj = serde_json::Map::new();
+
+          obj.insert(
+            "type".into(),
+            serde_json::Value::String(hook_type.to_string()),
+          );
+          obj.insert("name".into(), serde_json::Value::String(name.to_string()));
+          obj.insert(
+            "template".into(),
+            serde_json::Value::String(tmpl.to_string()),
+          );
+
+          if expanded && let Some(obs) = obs {
+            let (branch, ws_path) = current_workspace_or_root(obs);
+            let ctx = render_ctx(&branch, &ws_path, &obs.repo_root, hook_type, name);
+
+            match render(tmpl, &ctx) {
+              Ok(rendered) => {
+                obj.insert("rendered".into(), serde_json::Value::String(rendered));
+              }
+              Err(e) => {
+                obj.insert(
+                  "rendered".into(),
+                  serde_json::Value::String(format!("<error: {e}>")),
+                );
+              }
+            }
+          }
+
+          serde_json::Value::Object(obj)
+        })
+        .collect();
+
+      plan.push(Action::PrintLine(
+        serde_json::to_string(&items).expect("json"),
+      ));
+    }
+    OutputFormat::Text => {
+      let mut lines = Vec::new();
+
+      // Compute column widths.
+      let type_w = entries
+        .iter()
+        .map(|(t, _, _)| t.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+      let name_w = entries
+        .iter()
+        .map(|(_, n, _)| n.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+
+      // Header.
+      if expanded {
+        lines.push(format!(
+          "{:<type_w$}  {:<name_w$}  {}",
+          "Type", "Name", "Rendered",
+        ));
+      } else {
+        lines.push(format!(
+          "{:<type_w$}  {:<name_w$}  {}",
+          "Type", "Name", "Template",
+        ));
+      }
+
+      // Separator.
+      lines.push(format!(
+        "{:<type_w$}  {:<name_w$}  {}",
+        "-".repeat(type_w),
+        "-".repeat(name_w),
+        "-".repeat(8),
+      ));
+
+      for (hook_type, name, tmpl) in &entries {
+        let display_val = if expanded {
+          if let Some(obs) = obs {
+            let (branch, ws_path) = current_workspace_or_root(obs);
+            let ctx = render_ctx(&branch, &ws_path, &obs.repo_root, hook_type, name);
+
+            match render(tmpl, &ctx) {
+              Ok(rendered) => truncate_line(&rendered, 60),
+              Err(e) => format!("<error: {e}>"),
+            }
+          } else {
+            tmpl.to_string()
+          }
+        } else {
+          truncate_line(tmpl, 60)
+        };
+
+        lines.push(format!(
+          "{:<type_w$}  {:<name_w$}  {}",
+          hook_type, name, display_val,
+        ));
+      }
+
+      plan.push(Action::PrintLine(lines.join("\n")));
+    }
+  }
+
+  Ok(plan)
+}
+
+/// Extract current workspace branch + path from observation, falling back to
+/// repo root when not inside a workspace.
+fn current_workspace_or_root(obs: &ObservedState) -> (String, PathBuf) {
+  match obs.current_workspace.as_deref() {
+    Some(name) => {
+      let ws = obs.workspaces.iter().find(|w| w.name == name);
+
+      match ws {
+        Some(w) => (w.name.clone(), w.path.clone()),
+        None => (String::new(), obs.repo_root.clone()),
+      }
+    }
+    None => (String::new(), obs.repo_root.clone()),
+  }
+}
+
+fn truncate_line(s: &str, max: usize) -> String {
+  let first_line = s.lines().next().unwrap_or(s);
+
+  if first_line.len() > max {
+    format!("{}...", &first_line[..max - 3])
+  } else {
+    first_line.to_string()
+  }
 }

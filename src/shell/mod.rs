@@ -7,3 +7,4 @@ pub mod observe;
 pub mod proc;
 pub mod runtime;
 pub mod state;
+pub mod trash;

@@ -126,6 +126,30 @@ impl Jj for FakeJj {
   fn trunk_bookmark(&self, _r: &Path) -> Result<Option<String>> {
     Ok(None)
   }
+
+  fn git_fetch(&self, _r: &Path) -> Result<()> {
+    self.calls.borrow_mut().push("git_fetch".into());
+
+    Ok(())
+  }
+
+  fn workspace_rename(&self, _r: &Path, old: &str, new: &str) -> Result<()> {
+    self
+      .calls
+      .borrow_mut()
+      .push(format!("workspace_rename {old} {new}"));
+
+    Ok(())
+  }
+
+  fn bookmark_rename(&self, _r: &Path, old: &str, new: &str) -> Result<()> {
+    self
+      .calls
+      .borrow_mut()
+      .push(format!("bookmark_rename {old} {new}"));
+
+    Ok(())
+  }
 }
 
 impl Fs for FakeFs {
@@ -145,6 +169,24 @@ impl Fs for FakeFs {
 
   fn current_dir(&self) -> Result<PathBuf> {
     Ok(PathBuf::from("/repo"))
+  }
+
+  fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+    self
+      .calls
+      .borrow_mut()
+      .push(format!("rename {} {}", from.display(), to.display()));
+
+    Ok(())
+  }
+
+  fn create_dir_all(&self, p: &Path) -> Result<()> {
+    self
+      .calls
+      .borrow_mut()
+      .push(format!("create_dir_all {}", p.display()));
+
+    Ok(())
   }
 }
 
@@ -181,6 +223,15 @@ impl Proc for FakeProc {
     }
 
     Ok(0)
+  }
+
+  fn spawn_detached(&self, program: &str, args: &[&str]) -> Result<()> {
+    self
+      .calls
+      .borrow_mut()
+      .push(format!("spawn_detached {} {}", program, args.join(" ")));
+
+    Ok(())
   }
 }
 
@@ -255,5 +306,41 @@ fn execute_halts_on_hook_failure() {
   assert!(
     msg.contains("bad-hook"),
     "error should name the failing hook: {msg}"
+  );
+}
+
+#[test]
+fn execute_delete_dir_background_renames_and_spawns() {
+  let mut rt = Runtime::new(FakeJj::default(), FakeFs::default(), FakeProc::default())
+    .with_root(PathBuf::from("/repo"));
+
+  let plan = Plan {
+    actions: vec![Action::DeleteDirBackground {
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+    }],
+  };
+
+  execute(&plan, &mut rt).expect("ok");
+
+  let fs_calls = rt.fs.calls.borrow().clone();
+  let proc_calls = rt.proc.calls.borrow().clone();
+
+  assert!(
+    fs_calls
+      .iter()
+      .any(|c| c.starts_with("create_dir_all /repo/.jj/.jjwt-trash")),
+    "should create trash dir: {fs_calls:?}"
+  );
+  assert!(
+    fs_calls
+      .iter()
+      .any(|c| c.starts_with("rename /repo/.worktrees/feat-x")),
+    "should rename workspace into trash: {fs_calls:?}"
+  );
+  assert!(
+    proc_calls
+      .iter()
+      .any(|c| c.starts_with("spawn_detached rm -rf")),
+    "should spawn detached rm: {proc_calls:?}"
   );
 }

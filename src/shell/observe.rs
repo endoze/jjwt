@@ -10,6 +10,7 @@ pub fn observe<J: Jj, F: Fs>(
   fs: &F,
   start_dir: &Path,
   target_name: Option<&str>,
+  worktree_path_template: Option<&str>,
 ) -> Result<ObservedState> {
   let repo_root = match jj.repo_root(start_dir) {
     Ok(r) => r,
@@ -39,15 +40,28 @@ pub fn observe<J: Jj, F: Fs>(
   let mut target_resolved_workspace = None;
 
   if let Some(name) = target_name {
-    let target_path = repo_root.join(".worktrees").join(name);
+    let target_path = if let Some(tmpl) = worktree_path_template {
+      let ctx = crate::core::types::RenderContext {
+        branch: name.into(),
+        ..Default::default()
+      };
+      let rendered =
+        crate::core::template::render(tmpl, &ctx).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+      repo_root.join(rendered)
+    } else {
+      repo_root.join(".worktrees").join(name)
+    };
+
     target_path_exists = fs.exists(&target_path);
 
     if workspaces.iter().any(|w| w.name == name) {
       target_workspace_dirty = jj.workspace_is_dirty(&repo_root, name)?;
-    } else if let Ok(Some(trunk)) = jj.trunk_bookmark(&repo_root) {
-      if trunk == name && workspaces.iter().any(|w| w.name == "default") {
-        target_resolved_workspace = Some("default".to_string());
-      }
+    } else if let Ok(Some(trunk)) = jj.trunk_bookmark(&repo_root)
+      && trunk == name
+      && workspaces.iter().any(|w| w.name == "default")
+    {
+      target_resolved_workspace = Some("default".to_string());
     }
 
     target_bookmark_exists = jj.bookmark_exists(&repo_root, name)?;
@@ -197,6 +211,51 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
     rows,
     extra_branch_names,
     extra_remote_only_names,
+  })
+}
+
+pub fn observe_prune<J: Jj, F: Fs>(
+  jj: &J,
+  _fs: &F,
+  start_dir: &Path,
+) -> Result<crate::core::types::ObservedPruneState> {
+  use crate::core::types::ObservedPruneState;
+
+  let repo_root = match jj.repo_root(start_dir) {
+    Ok(r) => r,
+    Err(_) => {
+      return Ok(ObservedPruneState {
+        repo_root: start_dir.to_path_buf(),
+        is_jj_repo: false,
+        ..Default::default()
+      });
+    }
+  };
+
+  let workspaces = jj.workspace_list(&repo_root)?;
+  let cwd_canon = std::fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
+  let current_workspace = pick_current_workspace(&cwd_canon, &workspaces);
+
+  let mut workspace_status = Vec::with_capacity(workspaces.len());
+
+  for w in &workspaces {
+    let bm_exists = jj.bookmark_exists(&repo_root, &w.name)?;
+    let bm_merged = if bm_exists {
+      jj.bookmark_is_merged_into_trunk(&repo_root, &w.name)?
+    } else {
+      false
+    };
+    let dirty = jj.workspace_is_dirty(&repo_root, &w.name)?;
+
+    workspace_status.push((w.name.clone(), bm_exists, bm_merged, dirty));
+  }
+
+  Ok(ObservedPruneState {
+    repo_root,
+    is_jj_repo: true,
+    current_workspace,
+    workspaces,
+    workspace_status,
   })
 }
 

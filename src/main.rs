@@ -73,6 +73,37 @@ enum StepSub {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
     cmd: Vec<String>,
   },
+  /// Remove workspaces whose bookmarks are merged into trunk.
+  Prune {
+    /// Show what would be pruned without actually removing.
+    #[arg(long)]
+    dry_run: bool,
+    /// Skip configured hooks.
+    #[arg(long = "no-hooks")]
+    no_hooks: bool,
+    /// Output format: `text` (default) or `json`.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+  },
+  /// Rename a workspace and move its directory.
+  Relocate {
+    /// Current workspace name.
+    old_name: String,
+    /// New workspace name.
+    new_name: String,
+    /// Also rename the bookmark.
+    #[arg(long)]
+    rename_bookmark: bool,
+    /// Output format: `text` (default) or `json`.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+  },
+  /// Show diff of current workspace against trunk.
+  Diff {
+    /// Extra arguments forwarded to `jj diff`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    args: Vec<String>,
+  },
 }
 
 #[derive(Args)]
@@ -144,7 +175,17 @@ struct ListCmd {
 
 #[derive(Args)]
 struct HookCmd {
-  name: String,
+  /// Hook name to run. Omit to use --show.
+  name: Option<String>,
+  /// List all configured hooks.
+  #[arg(long)]
+  show: bool,
+  /// Render templates with current workspace context (requires --show).
+  #[arg(long, requires = "show")]
+  expanded: bool,
+  /// Output format: `text` (default) or `json`.
+  #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+  format: OutputFormat,
 }
 
 #[derive(Args)]
@@ -228,7 +269,17 @@ fn main() -> Result<()> {
       },
       l.format.into(),
     ),
-    Cmd::Hook(h) => cmd::hook::run(cwd, config, h.name),
+    Cmd::Hook(h) => {
+      if h.show {
+        cmd::hook_show::run(cwd, config, h.expanded, h.format.into())
+      } else {
+        let name = h
+          .name
+          .ok_or_else(|| anyhow::anyhow!("hook name required (or use --show)"))?;
+
+        cmd::hook::run(cwd, config, name)
+      }
+    }
     Cmd::Config(c) => match c.sub {
       ConfigSub::Shell(s) => match s.sub {
         ConfigShellSub::Init(i) => cmd::shell::dispatch(&i.shell),
@@ -241,6 +292,29 @@ fn main() -> Result<()> {
       StepSub::ForEach { cmd: argv } => cmd::step_for_each::run(cwd, argv),
       StepSub::Tether { cmd: argv } => {
         let code = cmd::step_tether::run(cwd, argv)?;
+
+        std::process::exit(code);
+      }
+      StepSub::Prune {
+        dry_run,
+        no_hooks,
+        format,
+      } => cmd::step_prune::run(cwd, config, dry_run, no_hooks, format.into()),
+      StepSub::Relocate {
+        old_name,
+        new_name,
+        rename_bookmark,
+        format,
+      } => cmd::step_relocate::run(
+        cwd,
+        config,
+        old_name,
+        new_name,
+        rename_bookmark,
+        format.into(),
+      ),
+      StepSub::Diff { args } => {
+        let code = cmd::step_diff::run(cwd, args)?;
 
         std::process::exit(code);
       }

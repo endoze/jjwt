@@ -13,18 +13,14 @@ use crate::shell::observe::observe;
 pub fn run(cwd: &Path, template: &str) -> Result<()> {
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None)?;
+  let obs = observe(&jj, &fs, cwd, None, None)?;
   let (branch, ws_path) = match obs.current_workspace.as_deref() {
-    Some(name) => {
-      let ws = obs
-        .workspaces
-        .iter()
-        .find(|w| w.name == name)
-        .map(|w| (w.name.clone(), w.path.clone()))
-        .unwrap_or_else(|| (String::new(), obs.repo_root.clone()));
-
-      ws
-    }
+    Some(name) => obs
+      .workspaces
+      .iter()
+      .find(|w| w.name == name)
+      .map(|w| (w.name.clone(), w.path.clone()))
+      .unwrap_or_else(|| (String::new(), obs.repo_root.clone())),
     None => (String::new(), obs.repo_root.clone()),
   };
   let ctx = RenderContext {

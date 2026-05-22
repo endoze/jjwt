@@ -33,7 +33,13 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, hook_name: String) -> Result<
     .name
     .clone();
 
-  let obs = observe(&jj, &fs, cwd, Some(&current))?;
+  let obs = observe(
+    &jj,
+    &fs,
+    cwd,
+    Some(&current),
+    cfg.worktree_path_template.as_deref(),
+  )?;
   let args = HookArgs {
     name: hook_name,
     current_workspace: current,

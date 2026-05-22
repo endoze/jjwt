@@ -5,6 +5,7 @@ use crate::core::plan::plan_remove;
 use crate::core::types::{OutputFormat, RemoveArgs};
 use crate::shell::config_loader::{find_config, load_config};
 use crate::shell::fs::RealFs;
+use crate::shell::jj::Jj;
 use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
 use crate::shell::proc::RealProc;
@@ -27,13 +28,21 @@ pub fn run(
   let cfg = load_config(&cfg_path)?;
 
   let jj = JjLib::new(cwd)?;
+
+  // Best-effort: clean up stale background-remove trash.
+  if cfg.background_remove == Some(true)
+    && let Ok(root) = jj.repo_root(cwd)
+  {
+    let _ = crate::shell::trash::sweep_trash(&root, std::time::Duration::from_secs(86400));
+  }
+
   let fs = RealFs;
   let proc = RealProc;
 
   let resolved_names: Vec<String> = if names.is_empty() {
     // Default to the current workspace. Reuse observe()'s containment
     // logic so the rule matches `list` and the alias dispatch.
-    let obs0 = observe(&jj, &fs, cwd, None)?;
+    let obs0 = observe(&jj, &fs, cwd, None, cfg.worktree_path_template.as_deref())?;
     let current = obs0.current_workspace.clone().ok_or_else(|| {
       anyhow::anyhow!("no workspace specified and cwd is not inside a known workspace")
     })?;
@@ -46,7 +55,13 @@ pub fn run(
   let mut rt = Runtime::new(jj, fs, proc);
 
   for name in resolved_names {
-    let obs = observe(&rt.jj, &rt.fs, cwd, Some(&name))?;
+    let obs = observe(
+      &rt.jj,
+      &rt.fs,
+      cwd,
+      Some(&name),
+      cfg.worktree_path_template.as_deref(),
+    )?;
 
     rt.repo_root = obs.repo_root.clone();
 

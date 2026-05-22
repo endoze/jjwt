@@ -24,7 +24,7 @@ pub fn run(
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
   let proc = RealProc;
-  let obs = observe(&jj, &fs, cwd, None)?;
+  let obs = observe(&jj, &fs, cwd, None, cfg.worktree_path_template.as_deref())?;
   let args = AliasArgs { name, forwarded };
   let plan = plan_alias(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
   let mut rt = Runtime::new(jj, fs, proc).with_root(obs.repo_root.clone());

@@ -104,10 +104,10 @@ impl JjLib {
   /// for the default workspace) back to jj's internal workspace name.
   fn internal_ws_name(&self, name: &str) -> String {
     // If this name matches the trunk bookmark, it's the default workspace.
-    if let Some(trunk) = self.resolve_trunk() {
-      if name == trunk {
-        return "default".to_string();
-      }
+    if let Some(trunk) = self.resolve_trunk()
+      && name == trunk
+    {
+      return "default".to_string();
     }
 
     name.to_string()
@@ -185,7 +185,7 @@ impl Jj for JjLib {
     let trunk_name = self.resolve_trunk();
     let mut workspaces = Vec::with_capacity(wc_ids.len());
 
-    for (ws_name, _commit_id) in wc_ids {
+    for ws_name in wc_ids.keys() {
       let internal_name = ws_name.as_str().to_string();
       let path = workspace_dir(&self.repo_root, &internal_name);
 
@@ -420,8 +420,14 @@ impl Jj for JjLib {
       None => return Ok((0, 0)),
     };
 
-    let ahead = self.count_between(&[trunk_id.clone()], &[ws_id.clone()])?;
-    let behind = self.count_between(&[ws_id], &[trunk_id])?;
+    let ahead = self.count_between(
+      std::slice::from_ref(&trunk_id),
+      std::slice::from_ref(&ws_id),
+    )?;
+    let behind = self.count_between(
+      std::slice::from_ref(&ws_id),
+      std::slice::from_ref(&trunk_id),
+    )?;
 
     Ok((ahead, behind))
   }
@@ -439,8 +445,8 @@ impl Jj for JjLib {
 
       let (ahead, behind) = match &trunk_id {
         Some(tid) => {
-          let a = self.count_between(&[tid.clone()], &[ws_id.clone()])?;
-          let b = self.count_between(&[ws_id], &[tid.clone()])?;
+          let a = self.count_between(std::slice::from_ref(tid), std::slice::from_ref(&ws_id))?;
+          let b = self.count_between(std::slice::from_ref(&ws_id), std::slice::from_ref(tid))?;
 
           (a, b)
         }
@@ -496,6 +502,81 @@ impl Jj for JjLib {
 
   fn trunk_bookmark(&self, _repo_root: &Path) -> Result<Option<String>> {
     Ok(self.resolve_trunk())
+  }
+
+  fn git_fetch(&self, repo_root: &Path) -> Result<()> {
+    let mut cmd = std::process::Command::new("jj");
+
+    cmd.arg("git").arg("fetch").arg("-R").arg(repo_root);
+
+    let out = cmd
+      .output()
+      .map_err(|e| anyhow::anyhow!("jj git fetch: {e}"))?;
+
+    if !out.status.success() {
+      return Err(anyhow::anyhow!(
+        "jj git fetch failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+      ));
+    }
+
+    Ok(())
+  }
+
+  fn workspace_rename(&self, _repo_root: &Path, old: &str, new: &str) -> Result<()> {
+    let repo = self.repo();
+    let old_internal = self.internal_ws_name(old);
+    let old_ws = WorkspaceName::new(&old_internal);
+
+    let commit_id = repo
+      .view()
+      .get_wc_commit_id(old_ws)
+      .cloned()
+      .ok_or_else(|| anyhow::anyhow!("workspace '{old}' not found"))?;
+
+    let mut tx = repo.start_transaction();
+    let new_ws = WorkspaceNameBuf::from(new);
+
+    let _ = tx.repo_mut().set_wc_commit(new_ws, commit_id);
+
+    let old_ws_buf = WorkspaceNameBuf::from(old_internal.as_str());
+
+    pollster::block_on(tx.repo_mut().remove_wc_commit(&old_ws_buf))
+      .map_err(|e| anyhow::anyhow!("workspace rename failed: {e}"))?;
+
+    let new_repo = pollster::block_on(tx.commit(format!("rename workspace {old} → {new}")))
+      .map_err(|e| anyhow::anyhow!("transaction commit failed: {e}"))?;
+
+    self.swap_repo(new_repo);
+
+    Ok(())
+  }
+
+  fn bookmark_rename(&self, _repo_root: &Path, old: &str, new: &str) -> Result<()> {
+    let repo = self.repo();
+    let old_ref = RefName::new(old);
+    let target = repo.view().get_local_bookmark(old_ref).clone();
+
+    if !target.is_present() {
+      return Err(anyhow::anyhow!("bookmark '{old}' not found"));
+    }
+
+    let mut tx = repo.start_transaction();
+    let new_ref = RefName::new(new);
+
+    tx.repo_mut().set_local_bookmark_target(new_ref, target);
+
+    let old_ref = RefName::new(old);
+
+    tx.repo_mut()
+      .set_local_bookmark_target(old_ref, RefTarget::absent());
+
+    let new_repo = pollster::block_on(tx.commit(format!("rename bookmark {old} → {new}")))
+      .map_err(|e| anyhow::anyhow!("transaction commit failed: {e}"))?;
+
+    self.swap_repo(new_repo);
+
+    Ok(())
   }
 }
 
@@ -621,7 +702,7 @@ fn materialize_tree_value(
   let Ok(reader) = pollster::block_on(
     repo
       .store()
-      .read_file(&jj_lib::repo_path::RepoPath::root(), id),
+      .read_file(jj_lib::repo_path::RepoPath::root(), id),
   ) else {
     return Vec::new();
   };

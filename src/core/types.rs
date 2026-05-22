@@ -72,11 +72,15 @@ pub struct Config {
     deserialize_with = "crate::core::config::deserialize_hook_groups"
   )]
   pub post_remove: Vec<HookGroup>,
+  #[serde(rename = "background-remove", default)]
+  pub background_remove: Option<bool>,
   /// Custom subcommands. Each entry maps `jjwt <name>` to a template
   /// rendered with the standard hook variables; the result is executed
   /// via `sh -c` with stdio inherited from the parent process.
   #[serde(default)]
   pub aliases: IndexMap<String, String>,
+  #[serde(rename = "worktree-path", default)]
+  pub worktree_path_template: Option<String>,
 }
 
 impl Config {
@@ -177,6 +181,21 @@ pub enum Action {
   DeleteDir {
     path: PathBuf,
   },
+  DeleteDirBackground {
+    path: PathBuf,
+  },
+  JjWorkspaceRename {
+    old_name: String,
+    new_name: String,
+  },
+  RenameDir {
+    from: PathBuf,
+    to: PathBuf,
+  },
+  JjBookmarkRename {
+    old_name: String,
+    new_name: String,
+  },
   RunHook {
     name: String,
     rendered_cmd: String,
@@ -266,6 +285,21 @@ pub struct AliasArgs {
   pub name: String,
   /// Tokens forwarded from the CLI; bound to `{{ args }}` in the template.
   pub forwarded: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RelocateArgs {
+  pub old_name: String,
+  pub new_name: String,
+  pub rename_bookmark: bool,
+  pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PruneArgs {
+  pub dry_run: bool,
+  pub no_hooks: bool,
+  pub format: OutputFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -361,6 +395,17 @@ pub struct ObservedListRow {
   /// True when the bookmark for this workspace has a remote-tracking
   /// variant (e.g. `<name>@origin`).
   pub has_remote_bookmark: bool,
+}
+
+/// State for the prune command: all workspaces with their merge status.
+#[derive(Debug, Clone, Default)]
+pub struct ObservedPruneState {
+  pub repo_root: PathBuf,
+  pub is_jj_repo: bool,
+  pub current_workspace: Option<String>,
+  pub workspaces: Vec<Workspace>,
+  /// Per-workspace: (bookmark_exists, bookmark_merged, workspace_dirty).
+  pub workspace_status: Vec<(String, bool, bool, bool)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

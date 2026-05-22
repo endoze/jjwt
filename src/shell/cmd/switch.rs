@@ -12,6 +12,75 @@ use crate::shell::proc::RealProc;
 use crate::shell::runtime::{Runtime, execute as run_plan};
 use crate::shell::state::{JjwtState, load as load_state, save as save_state};
 
+/// Resolve `pr:N` by querying the GitHub CLI for the PR's head branch.
+fn resolve_pr(n: u32, cwd: &Path) -> Result<String> {
+  let out = std::process::Command::new("gh")
+    .args([
+      "pr",
+      "view",
+      &n.to_string(),
+      "--json",
+      "headRefName",
+      "-q",
+      ".headRefName",
+    ])
+    .current_dir(cwd)
+    .output()
+    .map_err(|e| {
+      if e.kind() == std::io::ErrorKind::NotFound {
+        anyhow::anyhow!("gh CLI not found; install from https://cli.github.com")
+      } else {
+        anyhow::anyhow!("failed to run gh: {e}")
+      }
+    })?;
+
+  if !out.status.success() {
+    return Err(anyhow::anyhow!(
+      "gh pr view {n} failed: {}",
+      String::from_utf8_lossy(&out.stderr).trim()
+    ));
+  }
+
+  let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+  if branch.is_empty() {
+    return Err(anyhow::anyhow!("gh pr view {n} returned empty branch name"));
+  }
+
+  Ok(branch)
+}
+
+/// Resolve `mr:N` by querying the GitLab CLI for the MR's source branch.
+fn resolve_mr(n: u32, cwd: &Path) -> Result<String> {
+  let out = std::process::Command::new("glab")
+    .args(["mr", "view", &n.to_string(), "-F", "json"])
+    .current_dir(cwd)
+    .output()
+    .map_err(|e| {
+      if e.kind() == std::io::ErrorKind::NotFound {
+        anyhow::anyhow!("glab CLI not found; install from https://gitlab.com/gitlab-org/cli")
+      } else {
+        anyhow::anyhow!("failed to run glab: {e}")
+      }
+    })?;
+
+  if !out.status.success() {
+    return Err(anyhow::anyhow!(
+      "glab mr view {n} failed: {}",
+      String::from_utf8_lossy(&out.stderr).trim()
+    ));
+  }
+
+  let json: serde_json::Value = serde_json::from_slice(&out.stdout)
+    .map_err(|e| anyhow::anyhow!("failed to parse glab JSON: {e}"))?;
+  let branch = json["source_branch"]
+    .as_str()
+    .ok_or_else(|| anyhow::anyhow!("glab mr view {n}: missing source_branch in JSON"))?
+    .to_string();
+
+  Ok(branch)
+}
+
 /// Resolve the worktrunk-style shortcuts (`^`, `@`, `-`) against the
 /// observed jj state plus persisted previous-workspace hint. Returns the
 /// concrete workspace name or an error if a shortcut can't be resolved
@@ -28,13 +97,13 @@ fn resolve_shortcut<J: Jj, F: crate::shell::fs::Fs>(
       let trunk = jj
         .trunk_bookmark(&repo_root)?
         .ok_or_else(|| anyhow::anyhow!("`^` requires a trunk bookmark; none found"))?;
-      let probe = observe(jj, fs, cwd, Some(&trunk))?;
+      let probe = observe(jj, fs, cwd, Some(&trunk), None)?;
       let cur = probe.current_workspace.clone();
 
       Ok((trunk, cur))
     }
     "@" => {
-      let probe = observe(jj, fs, cwd, None)?;
+      let probe = observe(jj, fs, cwd, None, None)?;
       let cur = probe.current_workspace.clone();
       let n = cur
         .clone()
@@ -49,13 +118,33 @@ fn resolve_shortcut<J: Jj, F: crate::shell::fs::Fs>(
         .previous_workspace
         .clone()
         .ok_or_else(|| anyhow::anyhow!("no previous workspace recorded yet"))?;
-      let probe = observe(jj, fs, cwd, Some(&prev))?;
+      let probe = observe(jj, fs, cwd, Some(&prev), None)?;
       let cur = probe.current_workspace.clone();
 
       Ok((prev, cur))
     }
+    name if name.starts_with("pr:") => {
+      let n: u32 = name[3..]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid PR number: {}", &name[3..]))?;
+      let branch = resolve_pr(n, cwd)?;
+      let probe = observe(jj, fs, cwd, None, None)?;
+      let cur = probe.current_workspace.clone();
+
+      Ok((branch, cur))
+    }
+    name if name.starts_with("mr:") => {
+      let n: u32 = name[3..]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid MR number: {}", &name[3..]))?;
+      let branch = resolve_mr(n, cwd)?;
+      let probe = observe(jj, fs, cwd, None, None)?;
+      let cur = probe.current_workspace.clone();
+
+      Ok((branch, cur))
+    }
     _ => {
-      let probe = observe(jj, fs, cwd, None)?;
+      let probe = observe(jj, fs, cwd, None, None)?;
       let cur = probe.current_workspace.clone();
 
       Ok((name.to_string(), cur))
@@ -79,6 +168,14 @@ pub fn run(
   let cfg = load_config(&cfg_path)?;
 
   let jj = JjLib::new(cwd)?;
+
+  // Best-effort: clean up stale background-remove trash.
+  if cfg.background_remove == Some(true)
+    && let Ok(root) = jj.repo_root(cwd)
+  {
+    let _ = crate::shell::trash::sweep_trash(&root, std::time::Duration::from_secs(86400));
+  }
+
   let fs = RealFs;
   let proc = RealProc;
 
@@ -90,7 +187,38 @@ pub fn run(
   }
 
   let (resolved_name, current_before) = resolve_shortcut(&name, cwd, &jj, &fs)?;
-  let obs = observe(&jj, &fs, cwd, Some(&resolved_name))?;
+
+  // For pr: / mr: shortcuts, auto-create and fetch if needed.
+  let create = if (name.starts_with("pr:") || name.starts_with("mr:")) && !create {
+    let probe = observe(
+      &jj,
+      &fs,
+      cwd,
+      Some(&resolved_name),
+      cfg.worktree_path_template.as_deref(),
+    )?;
+    let ws_exists = probe.workspaces.iter().any(|w| w.name == resolved_name);
+
+    if !ws_exists {
+      // Fetch so the bookmark appears locally.
+      let repo_root = jj.repo_root(cwd)?;
+      let _ = jj.git_fetch(&repo_root);
+
+      true
+    } else {
+      false
+    }
+  } else {
+    create
+  };
+
+  let obs = observe(
+    &jj,
+    &fs,
+    cwd,
+    Some(&resolved_name),
+    cfg.worktree_path_template.as_deref(),
+  )?;
   let args = SwitchArgs {
     name: resolved_name,
     create,
@@ -111,13 +239,14 @@ pub fn run(
   // Persist the workspace we just *came from* so `jjwt switch -` knows
   // where to return on the next call. Best-effort: failure to save state
   // doesn't fail the switch (the switch already happened).
-  if let Some(prev) = current_before {
-    if prev != args.name {
-      let state = JjwtState {
-        previous_workspace: Some(prev),
-      };
-      let _ = save_state(&obs.repo_root, &state);
-    }
+  if let Some(prev) = current_before
+    && prev != args.name
+  {
+    let state = JjwtState {
+      previous_workspace: Some(prev),
+    };
+
+    let _ = save_state(&obs.repo_root, &state);
   }
 
   Ok(())

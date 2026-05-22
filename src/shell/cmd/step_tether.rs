@@ -19,7 +19,7 @@ pub fn run(cwd: &Path, argv: Vec<String>) -> Result<i32> {
 
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None)?;
+  let obs = observe(&jj, &fs, cwd, None, None)?;
 
   if !obs.is_jj_repo {
     bail!("not inside a jj repo");

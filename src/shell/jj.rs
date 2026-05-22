@@ -67,6 +67,12 @@ pub trait Jj {
   /// Name of the bookmark at `trunk()`, if any (typically "main" or "master").
   /// Used so `switch <default-branch>` routes to the default workspace.
   fn trunk_bookmark(&self, repo_root: &Path) -> Result<Option<String>>;
+  /// Run `jj git fetch` to update remote refs.
+  fn git_fetch(&self, repo_root: &Path) -> Result<()>;
+  /// Rename a workspace.
+  fn workspace_rename(&self, repo_root: &Path, old: &str, new: &str) -> Result<()>;
+  /// Rename a bookmark (create new at old's target, then delete old).
+  fn bookmark_rename(&self, repo_root: &Path, old: &str, new: &str) -> Result<()>;
 }
 
 /// Real implementation: shells out to the `jj` binary.
@@ -297,7 +303,7 @@ impl Jj for JjCli {
         .arg("log")
         .arg("--no-graph")
         .arg("-r")
-        .arg(&format!("{} & ::trunk()", name))
+        .arg(format!("{} & ::trunk()", name))
         .arg("-T")
         .arg(r#""x""#)
         .arg("--limit")
@@ -570,10 +576,11 @@ impl Jj for JjCli {
     for line in text.lines() {
       let trimmed = line.trim();
 
-      if let Some((name, remote)) = trimmed.rsplit_once('@') {
-        if !name.is_empty() && !remote.is_empty() {
-          set.insert(name.to_string());
-        }
+      if let Some((name, remote)) = trimmed.rsplit_once('@')
+        && !name.is_empty()
+        && !remote.is_empty()
+      {
+        set.insert(name.to_string());
       }
     }
 
@@ -660,6 +667,62 @@ impl Jj for JjCli {
       .filter(|s| !s.is_empty());
 
     Ok(name)
+  }
+
+  fn git_fetch(&self, repo_root: &Path) -> Result<()> {
+    let mut cmd = std::process::Command::new(&self.jj_path);
+
+    cmd.arg("git").arg("fetch").arg("-R").arg(repo_root);
+
+    run(&mut cmd)?;
+
+    Ok(())
+  }
+
+  fn workspace_rename(&self, repo_root: &Path, old: &str, new: &str) -> Result<()> {
+    let mut cmd = std::process::Command::new(&self.jj_path);
+
+    cmd
+      .arg("workspace")
+      .arg("rename")
+      .arg("--from")
+      .arg(old)
+      .arg("--to")
+      .arg(new)
+      .arg("-R")
+      .arg(repo_root);
+
+    run(&mut cmd)?;
+
+    Ok(())
+  }
+
+  fn bookmark_rename(&self, repo_root: &Path, old: &str, new: &str) -> Result<()> {
+    let mut create = std::process::Command::new(&self.jj_path);
+
+    create
+      .arg("bookmark")
+      .arg("create")
+      .arg(new)
+      .arg("-r")
+      .arg(old)
+      .arg("-R")
+      .arg(repo_root);
+
+    run(&mut create)?;
+
+    let mut del = std::process::Command::new(&self.jj_path);
+
+    del
+      .arg("bookmark")
+      .arg("delete")
+      .arg(old)
+      .arg("-R")
+      .arg(repo_root);
+
+    run(&mut del)?;
+
+    Ok(())
   }
 }
 
@@ -773,10 +836,10 @@ pub(crate) fn parse_diff_stat_summary(text: &str) -> (u32, u32) {
       }
     }
 
-    if let Some(rest) = l.split_once("deletion") {
-      if let Some(n) = rest.0.trim_end_matches(", ").split_whitespace().last() {
-        removed = n.parse().unwrap_or(0);
-      }
+    if let Some(rest) = l.split_once("deletion")
+      && let Some(n) = rest.0.trim_end_matches(", ").split_whitespace().last()
+    {
+      removed = n.parse().unwrap_or(0);
     }
 
     // Stop after the first non-empty line scanned from the bottom; it's

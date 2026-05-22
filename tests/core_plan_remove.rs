@@ -346,3 +346,73 @@ fn remove_no_bookmark_skips_delete() {
       .any(|a| matches!(a, Action::JjBookmarkDelete { .. }))
   );
 }
+
+#[test]
+fn background_remove_emits_delete_dir_background() {
+  let cfg = Config {
+    background_remove: Some(true),
+    ..Default::default()
+  };
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    force: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    workspaces: vec![Workspace {
+      name: "feat-x".into(),
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+      stale: false,
+    }],
+    target_bookmark_exists: true,
+    target_bookmark_merged: true,
+    ..Default::default()
+  };
+
+  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+
+  let has_bg_delete = plan
+    .actions
+    .iter()
+    .any(|a| matches!(a, Action::DeleteDirBackground { .. }));
+  let has_sync_delete = plan
+    .actions
+    .iter()
+    .any(|a| matches!(a, Action::DeleteDir { .. }));
+
+  assert!(has_bg_delete, "should have DeleteDirBackground");
+  assert!(!has_sync_delete, "should NOT have DeleteDir");
+}
+
+#[test]
+fn sync_remove_when_background_not_configured() {
+  let cfg = Config::default();
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    force: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    workspaces: vec![Workspace {
+      name: "feat-x".into(),
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+      stale: false,
+    }],
+    target_bookmark_exists: true,
+    target_bookmark_merged: true,
+    ..Default::default()
+  };
+
+  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+
+  let has_sync_delete = plan
+    .actions
+    .iter()
+    .any(|a| matches!(a, Action::DeleteDir { .. }));
+
+  assert!(has_sync_delete, "should have DeleteDir");
+}

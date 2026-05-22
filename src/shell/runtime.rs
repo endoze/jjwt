@@ -56,6 +56,28 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
       Action::DeleteDir { path } => {
         rt.fs.remove_dir_all(path)?;
       }
+      Action::JjWorkspaceRename { old_name, new_name } => {
+        rt.jj.workspace_rename(&rt.repo_root, old_name, new_name)?;
+      }
+      Action::RenameDir { from, to } => {
+        rt.fs.rename(from, to)?;
+      }
+      Action::JjBookmarkRename { old_name, new_name } => {
+        rt.jj.bookmark_rename(&rt.repo_root, old_name, new_name)?;
+      }
+      Action::DeleteDirBackground { path } => {
+        let ts = std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .unwrap_or_default()
+          .as_millis();
+        let trash_dir = rt.repo_root.join(".jj").join(".jjwt-trash");
+        let trash_path = trash_dir.join(ts.to_string());
+
+        rt.fs.create_dir_all(&trash_dir)?;
+        rt.fs.rename(path, &trash_path)?;
+        rt.proc
+          .spawn_detached("rm", &["-rf", &trash_path.display().to_string()])?;
+      }
       Action::RunHook {
         name,
         rendered_cmd,

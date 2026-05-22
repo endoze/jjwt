@@ -15,6 +15,10 @@ pub trait Proc {
   /// Returns the exit status code. Used for interactive commands
   /// (aliases, `step eval`, etc.) where users expect to see output live.
   fn run_sh_inherit(&self, cmd: &str, cwd: &Path, env: &[(String, String)]) -> Result<i32>;
+
+  /// Spawn a command without waiting for completion. Used for background
+  /// cleanup (detached `rm -rf`).
+  fn spawn_detached(&self, program: &str, args: &[&str]) -> Result<()>;
 }
 
 pub struct RealProc;
@@ -50,5 +54,19 @@ impl Proc for RealProc {
     let status = c.status().map_err(|e| anyhow!("failed to spawn sh: {e}"))?;
 
     Ok(status.code().unwrap_or(-1))
+  }
+
+  fn spawn_detached(&self, program: &str, args: &[&str]) -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    Command::new(program)
+      .args(args)
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
+      .spawn()
+      .map_err(|e| anyhow!("failed to spawn {program}: {e}"))?;
+
+    Ok(())
   }
 }
