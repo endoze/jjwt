@@ -1,11 +1,11 @@
 ---
 source: tests/core_format_list.rs
-assertion_line: 168
+assertion_line: 181
 expression: out
 ---
-  Branch                       Status  HEAD±       main↕    Path                                      URL     Commit    Age  Message
-@ default                          ^|                       .                                                 5f1e03db  9h   fix(deps): bump runtime
-+ feat-onboarding-pr7-drawing  +!?✘↑   +4000 -379  ↑10 ↓44  ./.worktrees/feat-onboarding-pr7-drawing  :10245  bd64221b  2w   feat(site-marketing): drawing tool
-+ feat-add-site-onboarding-3   +! ✘↕|  +117 -3     ↑31 ↓98  ./.worktrees/feat-add-site-onboarding-3   :16998  96cace1c  1mo  fix: unreachable
+  Branch                       Status     HEAD±    main↕  Path                                      URL     Commit    Age  Message
+@ default                          ^|                     .                                                 5f1e03db  9h   fix(deps): bump runtime
++ feat-onboarding-pr7-drawing  +!?✘↑   +4K -379  ↑10 ↓44  ./.worktrees/feat-onboarding-pr7-drawing  :10245  bd64221b  2w   feat(site-marketing): drawing tool
++ feat-add-site-onboarding-3   +! ✘↕|   +117 -3  ↑31 ↓98  ./.worktrees/feat-add-site-onboarding-3   :16998  96cace1c  1mo  fix: unreachable
 
 ○ Showing 3 worktrees, 2 with changes, 2 ahead

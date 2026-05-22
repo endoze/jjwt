@@ -3,7 +3,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::core::plan::plan_list;
-use crate::core::types::{ListOptions, OutputFormat};
+use crate::core::types::{DisplayHints, ListOptions, OutputFormat};
 use crate::shell::config_loader::{find_config, load_config};
 use crate::shell::fs::RealFs;
 use crate::shell::jj_lib::JjLib;
@@ -28,8 +28,15 @@ pub fn run(
 
   // JSON output is machine-readable; never style it. Text output styles
   // only when stdout is a real terminal and the user hasn't opted out.
-  let styled = matches!(format, OutputFormat::Text) && use_color();
-  let plan = plan_list(&cfg, &obs, styled, format).map_err(|e| anyhow::anyhow!("{e}"))?;
+  let display = DisplayHints {
+    styled: matches!(format, OutputFormat::Text) && use_color(),
+    term_width: if matches!(format, OutputFormat::Text) {
+      terminal_size::terminal_size().map(|(w, _)| w.0)
+    } else {
+      None
+    },
+  };
+  let plan = plan_list(&cfg, &obs, &display, format).map_err(|e| anyhow::anyhow!("{e}"))?;
   let mut rt = Runtime::new(jj, fs, proc).with_root(obs.repo_root.clone());
   let printed = execute(&plan, &mut rt)?;
 

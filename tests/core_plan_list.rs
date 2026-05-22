@@ -2,6 +2,11 @@ use jjwt::core::plan::plan_list;
 use jjwt::core::types::*;
 use std::path::PathBuf;
 
+const DISPLAY: DisplayHints = DisplayHints {
+  styled: false,
+  term_width: None,
+};
+
 fn cfg_with_list() -> Config {
   Config {
     list: Some(ListConfig {
@@ -65,7 +70,7 @@ fn list_renders_url_per_workspace() {
   let plan = plan_list(
     &cfg_with_list(),
     &obs_with_workspaces(),
-    false,
+    &DISPLAY,
     OutputFormat::Text,
   )
   .expect("plan ok");
@@ -90,7 +95,8 @@ fn list_without_list_config_still_prints_names() {
     pre_remove: vec![],
     ..Default::default()
   };
-  let plan = plan_list(&cfg, &obs_with_workspaces(), false, OutputFormat::Text).expect("plan ok");
+  let plan =
+    plan_list(&cfg, &obs_with_workspaces(), &DISPLAY, OutputFormat::Text).expect("plan ok");
   let Action::PrintLine(out) = &plan.actions[0] else {
     panic!()
   };
@@ -104,7 +110,7 @@ fn list_default_workspace_has_dot_path_not_worktrees() {
   let plan = plan_list(
     &cfg_with_list(),
     &obs_with_workspaces(),
-    false,
+    &DISPLAY,
     OutputFormat::Text,
   )
   .expect("plan ok");
@@ -130,7 +136,7 @@ fn list_footer_counts_ahead_and_dirty() {
   let mut obs = obs_with_workspaces();
 
   obs.rows[1].details.modified = true;
-  let plan = plan_list(&cfg_with_list(), &obs, false, OutputFormat::Text).expect("plan ok");
+  let plan = plan_list(&cfg_with_list(), &obs, &DISPLAY, OutputFormat::Text).expect("plan ok");
   let Action::PrintLine(out) = &plan.actions[0] else {
     panic!()
   };
@@ -148,7 +154,7 @@ fn list_errors_when_not_jj_repo() {
     is_jj_repo: false,
     ..Default::default()
   };
-  let err = plan_list(&cfg_with_list(), &obs, false, OutputFormat::Text).unwrap_err();
+  let err = plan_list(&cfg_with_list(), &obs, &DISPLAY, OutputFormat::Text).unwrap_err();
 
   assert!(matches!(err, CoreError::NotJjRepo), "got: {err:?}");
 }

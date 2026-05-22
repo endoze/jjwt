@@ -848,7 +848,7 @@ fn build_branch_row(name: &str) -> ListRow {
 pub fn plan_list(
   cfg: &Config,
   obs: &ObservedListState,
-  styled: bool,
+  display: &DisplayHints,
   format: OutputFormat,
 ) -> Result<Plan, CoreError> {
   if !obs.is_jj_repo {
@@ -876,7 +876,7 @@ pub fn plan_list(
   let mut plan = Plan::new();
 
   let body = match format {
-    OutputFormat::Text => format_list_table(&rows, styled),
+    OutputFormat::Text => format_list_table(&rows, display.styled, display.term_width),
     OutputFormat::Json => format_list_json(&rows),
   };
 

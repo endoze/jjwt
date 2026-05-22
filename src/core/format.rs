@@ -1,12 +1,114 @@
 use crate::core::types::{AheadBehind, LineDiff, ListRow, ListRowKind, StatusFlags, TrunkRel};
 use anstyle::{AnsiColor, Color, Style};
 use serde_json::{Map, Value, json};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const COL_SEP: &str = "  ";
+const COL_SEP_WIDTH: usize = 2;
+const GUTTER_WIDTH: usize = 2;
+const EMPTY_PENALTY: u8 = 10;
 
 const HEADERS: &[&str] = &[
   "Branch", "Status", "HEAD±", "main↕", "Path", "URL", "Commit", "Age", "Message",
+];
+
+#[derive(Clone, Copy, PartialEq)]
+enum Align {
+  Left,
+  Right,
+}
+
+struct ColSpec {
+  priority: u8,
+  shrinkable: bool,
+  min_width: Option<usize>,
+  max_width: Option<usize>,
+  align: Align,
+  truncatable: bool,
+}
+
+const COL_SPECS: [ColSpec; 9] = [
+  // Branch
+  ColSpec {
+    priority: 1,
+    shrinkable: true,
+    min_width: Some(6),
+    max_width: None,
+    align: Align::Left,
+    truncatable: false,
+  },
+  // Status
+  ColSpec {
+    priority: 2,
+    shrinkable: false,
+    min_width: None,
+    max_width: None,
+    align: Align::Left,
+    truncatable: false,
+  },
+  // HEAD±
+  ColSpec {
+    priority: 3,
+    shrinkable: false,
+    min_width: None,
+    max_width: None,
+    align: Align::Right,
+    truncatable: false,
+  },
+  // main↕
+  ColSpec {
+    priority: 4,
+    shrinkable: false,
+    min_width: None,
+    max_width: None,
+    align: Align::Right,
+    truncatable: false,
+  },
+  // Path
+  ColSpec {
+    priority: 7,
+    shrinkable: false,
+    min_width: None,
+    max_width: None,
+    align: Align::Left,
+    truncatable: true,
+  },
+  // URL
+  ColSpec {
+    priority: 9,
+    shrinkable: false,
+    min_width: None,
+    max_width: None,
+    align: Align::Left,
+    truncatable: true,
+  },
+  // Commit
+  ColSpec {
+    priority: 11,
+    shrinkable: false,
+    min_width: None,
+    max_width: None,
+    align: Align::Left,
+    truncatable: false,
+  },
+  // Age
+  ColSpec {
+    priority: 12,
+    shrinkable: false,
+    min_width: None,
+    max_width: None,
+    align: Align::Left,
+    truncatable: false,
+  },
+  // Message
+  ColSpec {
+    priority: 13,
+    shrinkable: false,
+    min_width: Some(10),
+    max_width: Some(100),
+    align: Align::Left,
+    truncatable: true,
+  },
 ];
 
 const DIM: Style = Style::new().dimmed();
@@ -18,7 +120,7 @@ const CYAN: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
 
 /// One rendered cell: `plain` is used for width measurement and padding,
 /// `display` is what is written out (may include ANSI escapes).
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Cell {
   plain: String,
   display: String,
@@ -41,13 +143,95 @@ impl Cell {
   }
 }
 
+/// Truncate a cell to fit within `max_width` visible characters, appending
+/// `…` as a suffix. For styled cells, the display string is rebuilt by
+/// truncating the plain text and re-wrapping with the original ANSI
+/// prefix/suffix that bookend the display string.
+fn truncate_cell(cell: &Cell, max_width: usize) -> Cell {
+  if cell.width() <= max_width || max_width == 0 {
+    return cell.clone();
+  }
+
+  let target = max_width.saturating_sub(1); // reserve 1 for …
+  let mut current_width = 0;
+  let mut last_idx = 0;
+
+  for (idx, ch) in cell.plain.char_indices() {
+    let char_w = ch.width().unwrap_or(0);
+
+    if current_width + char_w > target {
+      break;
+    }
+
+    current_width += char_w;
+    last_idx = idx + ch.len_utf8();
+  }
+
+  let truncated_plain = cell.plain[..last_idx].trim_end();
+  let new_plain = format!("{truncated_plain}…");
+
+  // If plain == display, there are no ANSI escapes.
+  if cell.plain == cell.display {
+    return Cell::raw(new_plain);
+  }
+
+  // Styled cell: the display may contain multiple ANSI-wrapped segments.
+  // Rebuild by truncating character-by-character, keeping escape sequences
+  // intact and dropping visible characters past the limit.
+  let mut new_display = String::new();
+  let mut visible = 0;
+  let mut chars = cell.display.chars().peekable();
+
+  while let Some(c) = chars.next() {
+    if c == '\u{1b}' && chars.peek() == Some(&'[') {
+      // Copy the entire escape sequence through.
+      new_display.push(c);
+      new_display.push(chars.next().unwrap()); // '['
+
+      while let Some(esc_c) = chars.next() {
+        new_display.push(esc_c);
+
+        if esc_c.is_ascii_alphabetic() {
+          break;
+        }
+      }
+    } else {
+      let char_w = c.width().unwrap_or(0);
+
+      if visible + char_w > target {
+        break;
+      }
+
+      new_display.push(c);
+      visible += char_w;
+    }
+  }
+
+  // Close any open ANSI style and append the ellipsis.
+  new_display.push_str("\u{1b}[0m…");
+
+  Cell::styled(new_plain, new_display)
+}
+
 /// Render a worktrunk-style list table for the given rows. Includes the
 /// header row, data rows, blank line, and footer summary.
 ///
 /// When `styled` is true, output is decorated with ANSI escape sequences.
-pub fn format_list_table(rows: &[ListRow], styled: bool) -> String {
-  let cells = build_cells(rows, styled);
-  let widths = compute_widths(&cells);
+/// When `term_width` is `Some`, columns are adaptively dropped, shrunk,
+/// and truncated to fit the terminal.
+pub fn format_list_table(rows: &[ListRow], styled: bool, term_width: Option<u16>) -> String {
+  let mut cells = build_cells(rows, styled);
+  let (widths, visible) = compute_widths(&cells, term_width);
+
+  // Truncate cells in truncatable columns that exceed their allocated width.
+  for row_cells in &mut cells {
+    for (i, cell) in row_cells.iter_mut().enumerate() {
+      if visible[i] && COL_SPECS[i].truncatable && cell.width() > widths[i] {
+        *cell = truncate_cell(cell, widths[i]);
+      }
+    }
+  }
+
   let mut out = String::new();
 
   // Header row: gutter column is empty; then the named columns.
@@ -64,13 +248,13 @@ pub fn format_list_table(rows: &[ListRow], styled: bool) -> String {
     }
   });
 
-  push_columns(&mut out, &header_cells, &widths);
+  push_columns(&mut out, &header_cells, &widths, &visible);
   out.push('\n');
 
   for (row, row_cells) in rows.iter().zip(cells.iter()) {
     out.push(gutter_char(row));
     out.push(' ');
-    push_columns(&mut out, row_cells, &widths);
+    push_columns(&mut out, row_cells, &widths, &visible);
     out.push('\n');
   }
 
@@ -81,20 +265,40 @@ pub fn format_list_table(rows: &[ListRow], styled: bool) -> String {
   out
 }
 
-fn push_columns(out: &mut String, cells: &[Cell; 9], widths: &[usize; 9]) {
-  let last = cells.len().saturating_sub(1);
+fn push_columns(out: &mut String, cells: &[Cell; 9], widths: &[usize; 9], visible: &[bool; 9]) {
+  let mut first = true;
 
   for (i, cell) in cells.iter().enumerate() {
-    out.push_str(&cell.display);
+    if !visible[i] {
+      continue;
+    }
 
-    if i < last {
-      let pad = widths[i].saturating_sub(cell.width());
+    if !first {
+      out.push_str(COL_SEP);
+    }
 
+    first = false;
+    let is_last_visible = (i + 1..9).all(|j| !visible[j]);
+    let pad = widths[i].saturating_sub(cell.width());
+
+    if COL_SPECS[i].align == Align::Right {
       for _ in 0..pad {
         out.push(' ');
       }
 
-      out.push_str(COL_SEP);
+      out.push_str(&cell.display);
+
+      if !is_last_visible {
+        // No trailing pad needed — right-aligned columns already fill width.
+      }
+    } else {
+      out.push_str(&cell.display);
+
+      if !is_last_visible {
+        for _ in 0..pad {
+          out.push(' ');
+        }
+      }
     }
   }
 }
@@ -134,24 +338,107 @@ fn text_cell(s: &str, style: Option<Style>) -> Cell {
   }
 }
 
-fn compute_widths(cells: &[[Cell; 9]]) -> [usize; 9] {
-  let mut widths = [0usize; 9];
+/// Compute column widths and a visibility mask. When `term_width` is
+/// `None`, every column gets its ideal (natural) width. When `Some`,
+/// columns are dropped by priority, shrunk, and capped to fit.
+fn compute_widths(cells: &[[Cell; 9]], term_width: Option<u16>) -> ([usize; 9], [bool; 9]) {
+  // Phase 1: compute ideal (natural) widths — max of header and all cells.
+  let mut ideal = [0usize; 9];
 
   for (i, h) in HEADERS.iter().enumerate() {
-    widths[i] = h.width();
+    ideal[i] = h.width();
   }
 
   for row in cells {
     for (i, cell) in row.iter().enumerate() {
       let w = cell.width();
 
-      if w > widths[i] {
-        widths[i] = w;
+      if w > ideal[i] {
+        ideal[i] = w;
       }
     }
   }
 
-  widths
+  let term_width = match term_width {
+    Some(w) => w as usize,
+    None => return (ideal, [true; 9]),
+  };
+
+  // Phase 2: compute effective priorities (empty columns get a penalty).
+  let mut priorities: [(u8, usize); 9] = std::array::from_fn(|i| {
+    let base = COL_SPECS[i].priority;
+    let all_empty = cells.iter().all(|row| row[i].width() == 0);
+
+    let effective = if all_empty {
+      base.saturating_add(EMPTY_PENALTY)
+    } else {
+      base
+    };
+
+    (effective, i)
+  });
+
+  // Sort ascending by effective priority (lowest = most important).
+  priorities.sort_by_key(|&(p, _)| p);
+
+  // Phase 3: allocate in priority order.
+  let mut widths = [0usize; 9];
+  let mut visible = [false; 9];
+  let budget = term_width.saturating_sub(GUTTER_WIDTH);
+  let mut remaining = budget;
+
+  for &(_, col) in &priorities {
+    let spec = &COL_SPECS[col];
+
+    // Cap ideal at max_width if specified.
+    let want = match spec.max_width {
+      Some(max) => ideal[col].min(max),
+      None => ideal[col],
+    };
+
+    // Account for separator (if this isn't the first visible column).
+    let sep = if visible.iter().any(|&v| v) {
+      COL_SEP_WIDTH
+    } else {
+      0
+    };
+
+    if want + sep <= remaining {
+      widths[col] = want;
+      visible[col] = true;
+      remaining -= want + sep;
+    } else if spec.shrinkable {
+      let min = spec.min_width.unwrap_or(1);
+
+      if min + sep <= remaining {
+        widths[col] = remaining - sep;
+        visible[col] = true;
+        remaining = 0;
+      }
+    } else if spec.min_width.is_some() {
+      let min = spec.min_width.unwrap();
+
+      if min + sep <= remaining {
+        widths[col] = min;
+        visible[col] = true;
+        remaining -= min + sep;
+      }
+    }
+    // Otherwise column is hidden (width stays 0, visible stays false).
+  }
+
+  // Phase 4: distribute remaining space to Message (the most useful
+  // flexible column), up to its max_width.
+  let msg_idx = 8;
+
+  if visible[msg_idx] && remaining > 0 {
+    let max = COL_SPECS[msg_idx].max_width.unwrap_or(usize::MAX);
+    let expansion = remaining.min(max.saturating_sub(widths[msg_idx]));
+
+    widths[msg_idx] += expansion;
+  }
+
+  (widths, visible)
 }
 
 fn gutter_char(row: &ListRow) -> char {
@@ -267,15 +554,32 @@ fn head_diff_cell(d: &LineDiff, styled: bool) -> Cell {
   }
 
   let mut display = String::new();
+  let (add_str, add_compact) = compact_signs(d.added);
+  let (rem_str, rem_compact) = compact_signs(d.removed);
 
   match (d.added, d.removed) {
     (0, 0) => {}
-    (a, 0) => display.push_str(&wrap(&format!("+{a}"), GREEN)),
-    (0, r) => display.push_str(&wrap(&format!("-{r}"), RED)),
-    (a, r) => {
-      display.push_str(&wrap(&format!("+{a}"), GREEN));
+    (a, 0) if a > 0 => {
+      let s = format!("+{add_str}");
+      let style = if add_compact { BOLD } else { GREEN };
+
+      display.push_str(&wrap(&s, style));
+    }
+    (0, r) if r > 0 => {
+      let s = format!("-{rem_str}");
+      let style = if rem_compact { BOLD } else { RED };
+
+      display.push_str(&wrap(&s, style));
+    }
+    _ => {
+      let add_s = format!("+{add_str}");
+      let rem_s = format!("-{rem_str}");
+      let add_style = if add_compact { BOLD } else { GREEN };
+      let rem_style = if rem_compact { BOLD } else { RED };
+
+      display.push_str(&wrap(&add_s, add_style));
       display.push(' ');
-      display.push_str(&wrap(&format!("-{r}"), RED));
+      display.push_str(&wrap(&rem_s, rem_style));
     }
   }
 
@@ -290,36 +594,85 @@ fn ahead_behind_cell(ab: &AheadBehind, styled: bool) -> Cell {
   }
 
   let mut display = String::new();
+  let (ahead_str, ahead_compact) = compact_arrows(ab.ahead);
+  let (behind_str, behind_compact) = compact_arrows(ab.behind);
 
   match (ab.ahead, ab.behind) {
     (0, 0) => {}
-    (a, 0) => display.push_str(&wrap(&format!("↑{a}"), GREEN)),
-    (0, b) => display.push_str(&wrap(&format!("↓{b}"), YELLOW)),
-    (a, b) => {
-      display.push_str(&wrap(&format!("↑{a}"), GREEN));
+    (a, 0) if a > 0 => {
+      let s = format!("↑{ahead_str}");
+      let style = if ahead_compact { BOLD } else { GREEN };
+
+      display.push_str(&wrap(&s, style));
+    }
+    (0, b) if b > 0 => {
+      let s = format!("↓{behind_str}");
+      let style = if behind_compact { BOLD } else { YELLOW };
+
+      display.push_str(&wrap(&s, style));
+    }
+    _ => {
+      let ahead_s = format!("↑{ahead_str}");
+      let behind_s = format!("↓{behind_str}");
+      let a_style = if ahead_compact { BOLD } else { GREEN };
+      let b_style = if behind_compact { BOLD } else { YELLOW };
+
+      display.push_str(&wrap(&ahead_s, a_style));
       display.push(' ');
-      display.push_str(&wrap(&format!("↓{b}"), YELLOW));
+      display.push_str(&wrap(&behind_s, b_style));
     }
   }
 
   Cell::styled(plain, display)
 }
 
+/// Compact notation for sign-style diffs (HEAD±). Values 0–999 are
+/// literal, 1000–9999 become `NK`, 10000+ become `∞`.
+fn compact_signs(value: u32) -> (String, bool) {
+  if value >= 10_000 {
+    ("∞".to_string(), true)
+  } else if value >= 1_000 {
+    (format!("{}K", value / 1_000), true)
+  } else {
+    (value.to_string(), false)
+  }
+}
+
+/// Compact notation for arrow-style diffs (main↕). Values 0–99 are
+/// literal, 100–999 become `NC`, 1000–9999 become `NK`, 10000+ become `∞`.
+fn compact_arrows(value: u32) -> (String, bool) {
+  if value >= 10_000 {
+    ("∞".to_string(), true)
+  } else if value >= 1_000 {
+    (format!("{}K", value / 1_000), true)
+  } else if value >= 100 {
+    (format!("{}C", value / 100), true)
+  } else {
+    (value.to_string(), false)
+  }
+}
+
 fn format_head_diff(d: &LineDiff) -> String {
+  let (add_str, _) = compact_signs(d.added);
+  let (rem_str, _) = compact_signs(d.removed);
+
   match (d.added, d.removed) {
     (0, 0) => String::new(),
-    (a, 0) => format!("+{a}"),
-    (0, r) => format!("-{r}"),
-    (a, r) => format!("+{a} -{r}"),
+    (a, 0) if a > 0 => format!("+{add_str}"),
+    (0, r) if r > 0 => format!("-{rem_str}"),
+    _ => format!("+{add_str} -{rem_str}"),
   }
 }
 
 fn format_ahead_behind(ab: &AheadBehind) -> String {
+  let (ahead_str, _) = compact_arrows(ab.ahead);
+  let (behind_str, _) = compact_arrows(ab.behind);
+
   match (ab.ahead, ab.behind) {
     (0, 0) => String::new(),
-    (a, 0) => format!("↑{a}"),
-    (0, b) => format!("↓{b}"),
-    (a, b) => format!("↑{a} ↓{b}"),
+    (a, 0) if a > 0 => format!("↑{ahead_str}"),
+    (0, b) if b > 0 => format!("↓{behind_str}"),
+    _ => format!("↑{ahead_str} ↓{behind_str}"),
   }
 }
 

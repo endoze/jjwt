@@ -408,6 +408,18 @@ pub struct ObservedPruneState {
   pub workspace_status: Vec<(String, bool, bool, bool)>,
 }
 
+/// Presentation hints observed from the terminal environment. The shell
+/// constructs this from I/O (terminal detection, `NO_COLOR`, terminal
+/// size) and passes it into the core as plain data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DisplayHints {
+  /// Whether to emit ANSI escape sequences.
+  pub styled: bool,
+  /// Terminal width in columns, if known. `None` means unbounded (e.g.
+  /// piped output).
+  pub term_width: Option<u16>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ObservedListState {
   pub repo_root: PathBuf,
