@@ -7,5 +7,5 @@
 /// Replaces path separators (`/` and `\`) with dashes to prevent directory
 /// traversal and ensure the branch name is a single path component.
 pub fn sanitize(branch: &str) -> String {
-    branch.replace(['/', '\\'], "-")
+  branch.replace(['/', '\\'], "-")
 }

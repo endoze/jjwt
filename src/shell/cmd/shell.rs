@@ -15,7 +15,7 @@ end
 "#;
 
 pub fn run_fish() -> Result<()> {
-    print!("{FISH_WRAPPER}");
+  print!("{FISH_WRAPPER}");
 
-    Ok(())
+  Ok(())
 }

@@ -14,14 +14,14 @@ use jjwt::core::filters::sanitize::sanitize;
 
 #[test]
 fn hash_port_pinned_values() {
-    assert_eq!(hash_port("app-feat-port-webhook-to-rust"), 12200);
-    assert_eq!(hash_port("app-main"), 19926);
-    assert_eq!(hash_port("app-bug-foo"), 12511);
+  assert_eq!(hash_port("app-feat-port-webhook-to-rust"), 12200);
+  assert_eq!(hash_port("app-main"), 19926);
+  assert_eq!(hash_port("app-bug-foo"), 12511);
 }
 
 #[test]
 fn sanitize_pinned_values() {
-    assert_eq!(sanitize("feat/port-webhook"), "feat-port-webhook");
-    assert_eq!(sanitize("Bug/FOO_Bar"), "Bug-FOO_Bar");
-    assert_eq!(sanitize("main"), "main");
+  assert_eq!(sanitize("feat/port-webhook"), "feat-port-webhook");
+  assert_eq!(sanitize("Bug/FOO_Bar"), "Bug-FOO_Bar");
+  assert_eq!(sanitize("main"), "main");
 }
