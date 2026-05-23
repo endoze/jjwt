@@ -102,7 +102,7 @@ fn ambiguous_hook_errors() {
   let mut dup = IndexMap::new();
   dup.insert("db".to_string(), "different".to_string());
 
-  cfg.pre_remove.push(SourcedHookGroup {
+  cfg.hooks.pre_remove.push(SourcedHookGroup {
     source: HookSource::Project,
     group: dup,
   });

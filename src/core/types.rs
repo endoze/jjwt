@@ -160,23 +160,106 @@ pub struct SourcedHookGroup {
   pub group: HookGroup,
 }
 
+/// The six hook lifecycle slots, generic over the hook representation.
+/// `Config` uses `HookSet<HookGroup>` (raw TOML groups);
+/// `MergedConfig` uses `HookSet<SourcedHookGroup>` (groups tagged with
+/// their config layer).
+#[derive(Debug, Clone)]
+pub struct HookSet<T> {
+  /// Hooks fired before switching workspaces.
+  pub pre_switch: Vec<T>,
+  /// Hooks fired after switching workspaces.
+  pub post_switch: Vec<T>,
+  /// Hooks fired before creating a workspace.
+  pub pre_start: Vec<T>,
+  /// Hooks fired after creating a workspace.
+  pub post_start: Vec<T>,
+  /// Hooks fired before removing a workspace.
+  pub pre_remove: Vec<T>,
+  /// Hooks fired after removing a workspace.
+  pub post_remove: Vec<T>,
+}
+
+impl<T> Default for HookSet<T> {
+  fn default() -> Self {
+    Self {
+      pre_switch: Vec::new(),
+      post_switch: Vec::new(),
+      pre_start: Vec::new(),
+      post_start: Vec::new(),
+      pre_remove: Vec::new(),
+      post_remove: Vec::new(),
+    }
+  }
+}
+
+impl<T> HookSet<T> {
+  /// Iterate (hook_type, groups) pairs over every configured hook slot.
+  pub fn all_groups(&self) -> [(&'static str, &[T]); 6] {
+    [
+      ("pre-switch", self.pre_switch.as_slice()),
+      ("post-switch", self.post_switch.as_slice()),
+      ("pre-start", self.pre_start.as_slice()),
+      ("post-start", self.post_start.as_slice()),
+      ("pre-remove", self.pre_remove.as_slice()),
+      ("post-remove", self.post_remove.as_slice()),
+    ]
+  }
+}
+
+impl HookSet<SourcedHookGroup> {
+  /// Merge a user layer and a project layer into sourced hook groups.
+  /// User hooks come first; project hooks are appended.
+  fn merge(user: &[HookGroup], project: &[HookGroup]) -> Vec<SourcedHookGroup> {
+    user
+      .iter()
+      .map(|g| SourcedHookGroup {
+        source: HookSource::User,
+        group: g.clone(),
+      })
+      .chain(project.iter().map(|g| SourcedHookGroup {
+        source: HookSource::Project,
+        group: g.clone(),
+      }))
+      .collect()
+  }
+
+  /// Merge all six hook slots from user and project configs.
+  fn from_config_layers(user: &Config, project: &Config) -> Self {
+    Self {
+      pre_switch: Self::merge(&user.pre_switch, &project.pre_switch),
+      post_switch: Self::merge(&user.post_switch, &project.post_switch),
+      pre_start: Self::merge(&user.pre_start, &project.pre_start),
+      post_start: Self::merge(&user.post_start, &project.post_start),
+      pre_remove: Self::merge(&user.pre_remove, &project.pre_remove),
+      post_remove: Self::merge(&user.post_remove, &project.post_remove),
+    }
+  }
+
+  /// Convert back to plain `HookGroup` vectors, discarding source provenance.
+  fn to_raw(&self) -> HookSet<HookGroup> {
+    let extract = |groups: &[SourcedHookGroup]| -> Vec<HookGroup> {
+      groups.iter().map(|shg| shg.group.clone()).collect()
+    };
+
+    HookSet {
+      pre_switch: extract(&self.pre_switch),
+      post_switch: extract(&self.post_switch),
+      pre_start: extract(&self.pre_start),
+      post_start: extract(&self.post_start),
+      pre_remove: extract(&self.pre_remove),
+      post_remove: extract(&self.post_remove),
+    }
+  }
+}
+
 /// User and project configs merged into a single effective configuration.
 #[derive(Debug, Clone, Default)]
 pub struct MergedConfig {
   /// List subcommand settings (URL template, summary toggle).
   pub list: Option<ListConfig>,
-  /// Hooks fired before switching workspaces.
-  pub pre_switch: Vec<SourcedHookGroup>,
-  /// Hooks fired after switching workspaces.
-  pub post_switch: Vec<SourcedHookGroup>,
-  /// Hooks fired before creating a workspace.
-  pub pre_start: Vec<SourcedHookGroup>,
-  /// Hooks fired after creating a workspace.
-  pub post_start: Vec<SourcedHookGroup>,
-  /// Hooks fired before removing a workspace.
-  pub pre_remove: Vec<SourcedHookGroup>,
-  /// Hooks fired after removing a workspace.
-  pub post_remove: Vec<SourcedHookGroup>,
+  /// All six hook lifecycle slots, tagged with their config source.
+  pub hooks: HookSet<SourcedHookGroup>,
   /// Whether directory deletion should run in the background.
   pub background_remove: Option<bool>,
   /// Custom subcommand aliases (name to template).
@@ -197,6 +280,8 @@ impl MergedConfig {
     let u = user.cloned().unwrap_or_default();
     let p = project.cloned().unwrap_or_default();
 
+    let hooks = HookSet::from_config_layers(&u, &p);
+
     let list = p.list.or(u.list);
     let background_remove = p.background_remove.or(u.background_remove);
     let worktree_path_template = p.worktree_path_template.or(u.worktree_path_template);
@@ -210,12 +295,7 @@ impl MergedConfig {
 
     Self {
       list,
-      pre_switch: Self::merge_hooks(&u.pre_switch, &p.pre_switch),
-      post_switch: Self::merge_hooks(&u.post_switch, &p.post_switch),
-      pre_start: Self::merge_hooks(&u.pre_start, &p.pre_start),
-      post_start: Self::merge_hooks(&u.post_start, &p.post_start),
-      pre_remove: Self::merge_hooks(&u.pre_remove, &p.pre_remove),
-      post_remove: Self::merge_hooks(&u.post_remove, &p.post_remove),
+      hooks,
       background_remove,
       aliases,
       worktree_path_template,
@@ -254,53 +334,30 @@ impl MergedConfig {
   }
 
   /// Iterate (hook_type, groups) pairs over every configured hook group.
-  pub fn all_hook_groups(&self) -> Vec<(&'static str, &[SourcedHookGroup])> {
-    vec![
-      ("pre-switch", self.pre_switch.as_slice()),
-      ("post-switch", self.post_switch.as_slice()),
-      ("pre-start", self.pre_start.as_slice()),
-      ("post-start", self.post_start.as_slice()),
-      ("pre-remove", self.pre_remove.as_slice()),
-      ("post-remove", self.post_remove.as_slice()),
-    ]
+  pub fn all_hook_groups(&self) -> [(&'static str, &[SourcedHookGroup]); 6] {
+    self.hooks.all_groups()
   }
 
   /// Convert back to a plain `Config`, discarding source provenance.
   /// Used internally for multi-layer merges where the intermediate
   /// result feeds into another `from_layers` call.
   fn to_config_lossy(&self) -> Config {
-    let extract = |groups: &[SourcedHookGroup]| -> Vec<HookGroup> {
-      groups.iter().map(|shg| shg.group.clone()).collect()
-    };
+    let raw = self.hooks.to_raw();
 
     Config {
       list: self.list.clone(),
-      pre_switch: extract(&self.pre_switch),
-      post_switch: extract(&self.post_switch),
-      pre_start: extract(&self.pre_start),
-      post_start: extract(&self.post_start),
-      pre_remove: extract(&self.pre_remove),
-      post_remove: extract(&self.post_remove),
+      pre_switch: raw.pre_switch,
+      post_switch: raw.post_switch,
+      pre_start: raw.pre_start,
+      post_start: raw.post_start,
+      pre_remove: raw.pre_remove,
+      post_remove: raw.post_remove,
       background_remove: self.background_remove,
       aliases: self.aliases.clone(),
       worktree_path_template: self.worktree_path_template.clone(),
       commit: self.commit.clone(),
       projects: HashMap::new(),
     }
-  }
-
-  fn merge_hooks(user: &[HookGroup], project: &[HookGroup]) -> Vec<SourcedHookGroup> {
-    user
-      .iter()
-      .map(|g| SourcedHookGroup {
-        source: HookSource::User,
-        group: g.clone(),
-      })
-      .chain(project.iter().map(|g| SourcedHookGroup {
-        source: HookSource::Project,
-        group: g.clone(),
-      }))
-      .collect()
   }
 }
 

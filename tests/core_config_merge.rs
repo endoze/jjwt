@@ -95,11 +95,11 @@ fn merge_hooks_concatenate_user_first() {
 
   let merged = MergedConfig::from_layers(Some(&user), Some(&project));
 
-  assert_eq!(merged.pre_start.len(), 2);
-  assert_eq!(merged.pre_start[0].source, HookSource::User);
-  assert!(merged.pre_start[0].group.contains_key("user-setup"));
-  assert_eq!(merged.pre_start[1].source, HookSource::Project);
-  assert!(merged.pre_start[1].group.contains_key("project-db"));
+  assert_eq!(merged.hooks.pre_start.len(), 2);
+  assert_eq!(merged.hooks.pre_start[0].source, HookSource::User);
+  assert!(merged.hooks.pre_start[0].group.contains_key("user-setup"));
+  assert_eq!(merged.hooks.pre_start[1].source, HookSource::Project);
+  assert!(merged.hooks.pre_start[1].group.contains_key("project-db"));
 }
 
 #[test]
@@ -117,13 +117,13 @@ fn merge_hooks_source_tracking() {
   let merged = MergedConfig::from_layers(Some(&user), Some(&project));
 
   // pre_switch has both layers
-  assert_eq!(merged.pre_switch.len(), 2);
-  assert_eq!(merged.pre_switch[0].source, HookSource::User);
-  assert_eq!(merged.pre_switch[1].source, HookSource::Project);
+  assert_eq!(merged.hooks.pre_switch.len(), 2);
+  assert_eq!(merged.hooks.pre_switch[0].source, HookSource::User);
+  assert_eq!(merged.hooks.pre_switch[1].source, HookSource::Project);
 
   // post_remove only has user
-  assert_eq!(merged.post_remove.len(), 1);
-  assert_eq!(merged.post_remove[0].source, HookSource::User);
+  assert_eq!(merged.hooks.post_remove.len(), 1);
+  assert_eq!(merged.hooks.post_remove[0].source, HookSource::User);
 }
 
 #[test]
@@ -137,8 +137,8 @@ fn merge_user_only() {
   let merged = MergedConfig::from_layers(Some(&user), None);
 
   assert_eq!(merged.background_remove, Some(true));
-  assert_eq!(merged.pre_start.len(), 1);
-  assert_eq!(merged.pre_start[0].source, HookSource::User);
+  assert_eq!(merged.hooks.pre_start.len(), 1);
+  assert_eq!(merged.hooks.pre_start[0].source, HookSource::User);
 }
 
 #[test]
@@ -152,8 +152,8 @@ fn merge_project_only() {
   let merged = MergedConfig::from_layers(None, Some(&project));
 
   assert_eq!(merged.background_remove, Some(false));
-  assert_eq!(merged.pre_start.len(), 1);
-  assert_eq!(merged.pre_start[0].source, HookSource::Project);
+  assert_eq!(merged.hooks.pre_start.len(), 1);
+  assert_eq!(merged.hooks.pre_start[0].source, HookSource::Project);
 }
 
 #[test]
@@ -164,12 +164,12 @@ fn merge_both_empty() {
   assert!(merged.background_remove.is_none());
   assert!(merged.worktree_path_template.is_none());
   assert!(merged.aliases.is_empty());
-  assert!(merged.pre_switch.is_empty());
-  assert!(merged.post_switch.is_empty());
-  assert!(merged.pre_start.is_empty());
-  assert!(merged.post_start.is_empty());
-  assert!(merged.pre_remove.is_empty());
-  assert!(merged.post_remove.is_empty());
+  assert!(merged.hooks.pre_switch.is_empty());
+  assert!(merged.hooks.post_switch.is_empty());
+  assert!(merged.hooks.pre_start.is_empty());
+  assert!(merged.hooks.post_start.is_empty());
+  assert!(merged.hooks.pre_remove.is_empty());
+  assert!(merged.hooks.post_remove.is_empty());
 }
 
 #[test]
@@ -182,11 +182,11 @@ fn from_project_convenience_tags_all_as_project() {
 
   let merged = MergedConfig::from_project(cfg);
 
-  for shg in &merged.pre_start {
+  for shg in &merged.hooks.pre_start {
     assert_eq!(shg.source, HookSource::Project);
   }
 
-  for shg in &merged.post_switch {
+  for shg in &merged.hooks.post_switch {
     assert_eq!(shg.source, HookSource::Project);
   }
 }
@@ -322,10 +322,14 @@ fn three_layer_hooks_all_layers_contribute() {
   );
 
   // All three layers contribute to hooks: user + override + project
-  assert_eq!(merged.pre_start.len(), 3);
-  assert!(merged.pre_start[0].group.contains_key("user-hook"));
-  assert!(merged.pre_start[1].group.contains_key("override-hook"));
-  assert!(merged.pre_start[2].group.contains_key("project-hook"));
+  assert_eq!(merged.hooks.pre_start.len(), 3);
+  assert!(merged.hooks.pre_start[0].group.contains_key("user-hook"));
+  assert!(
+    merged.hooks.pre_start[1]
+      .group
+      .contains_key("override-hook")
+  );
+  assert!(merged.hooks.pre_start[2].group.contains_key("project-hook"));
 }
 
 #[test]
