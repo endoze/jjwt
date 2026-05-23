@@ -98,22 +98,26 @@ fn render_hook_group(
   Ok(out)
 }
 
-/// Gate `render_hook_group` on a runtime flag. When the flag is false,
-/// returns an empty Vec without rendering — used to honor `--no-hooks`
-/// without splattering branches across every call site in `plan_switch`
-/// and `plan_remove`.
-fn render_hook_group_if(
-  run: bool,
-  groups: &[SourcedHookGroup],
-  hook_type: &str,
-  branch: &str,
-  ws_path: &Path,
-  repo_root: &Path,
-) -> Result<Vec<Action>, CoreError> {
-  if run {
-    render_hook_group(groups, hook_type, branch, ws_path, repo_root)
-  } else {
-    Ok(Vec::new())
+impl Plan {
+  /// Render hooks from the given groups and append them to this plan.
+  /// When `run` is false, does nothing — used to honor `--no-hooks`
+  /// without splattering branches across every call site.
+  fn extend_hooks(
+    &mut self,
+    run: bool,
+    groups: &[SourcedHookGroup],
+    hook_type: &str,
+    branch: &str,
+    ws_path: &Path,
+    repo_root: &Path,
+  ) -> Result<(), CoreError> {
+    if run {
+      self.actions.extend(render_hook_group(
+        groups, hook_type, branch, ws_path, repo_root,
+      )?);
+    }
+
+    Ok(())
   }
 }
 
@@ -179,16 +183,14 @@ fn plan_switch_create(
 
   // `pre-switch` fires before the workspace exists; it runs in the
   // repo root so the user still has a cwd to operate from.
-  for a in render_hook_group_if(
+  plan.extend_hooks(
     !args.no_hooks,
-    &cfg.pre_switch,
+    &cfg.hooks.pre_switch,
     "pre-switch",
     &args.name,
     &ws_path,
     &obs.repo_root,
-  )? {
-    plan.push(a);
-  }
+  )?;
 
   plan.push(Action::JjWorkspaceAdd {
     name: args.name.clone(),
@@ -199,27 +201,22 @@ fn plan_switch_create(
     workspace: args.name.clone(),
   });
 
-  for a in render_hook_group_if(
+  plan.extend_hooks(
     !args.no_hooks,
-    &cfg.pre_start,
+    &cfg.hooks.pre_start,
     "pre-start",
     &args.name,
     &ws_path,
     &obs.repo_root,
-  )? {
-    plan.push(a);
-  }
-
-  for a in render_hook_group_if(
+  )?;
+  plan.extend_hooks(
     !args.no_hooks,
-    &cfg.post_start,
+    &cfg.hooks.post_start,
     "post-start",
     &args.name,
     &ws_path,
     &obs.repo_root,
-  )? {
-    plan.push(a);
-  }
+  )?;
 
   emit_switch_output(
     &mut plan,
@@ -231,16 +228,14 @@ fn plan_switch_create(
     true,
   )?;
 
-  for a in render_hook_group_if(
+  plan.extend_hooks(
     !args.no_hooks,
-    &cfg.post_switch,
+    &cfg.hooks.post_switch,
     "post-switch",
     &args.name,
     &ws_path,
     &obs.repo_root,
-  )? {
-    plan.push(a);
-  }
+  )?;
 
   Ok(plan)
 }
@@ -267,16 +262,14 @@ fn plan_switch_existing(
 
   let mut plan = Plan::new();
 
-  for a in render_hook_group_if(
+  plan.extend_hooks(
     !args.no_hooks,
-    &cfg.pre_switch,
+    &cfg.hooks.pre_switch,
     "pre-switch",
     &ws.name,
     &ws.path,
     &obs.repo_root,
-  )? {
-    plan.push(a);
-  }
+  )?;
 
   if ws.stale {
     plan.push(Action::JjWorkspaceUpdateStale {
@@ -285,16 +278,14 @@ fn plan_switch_existing(
   }
 
   if args.rerun_hooks {
-    for a in render_hook_group_if(
+    plan.extend_hooks(
       !args.no_hooks,
-      &cfg.pre_start,
+      &cfg.hooks.pre_start,
       "pre-start",
       &ws.name,
       &ws.path,
       &obs.repo_root,
-    )? {
-      plan.push(a);
-    }
+    )?;
   }
 
   emit_switch_output(
@@ -307,16 +298,14 @@ fn plan_switch_existing(
     false,
   )?;
 
-  for a in render_hook_group_if(
+  plan.extend_hooks(
     !args.no_hooks,
-    &cfg.post_switch,
+    &cfg.hooks.post_switch,
     "post-switch",
     &ws.name,
     &ws.path,
     &obs.repo_root,
-  )? {
-    plan.push(a);
-  }
+  )?;
 
   Ok(plan)
 }
@@ -416,16 +405,14 @@ pub fn plan_remove(
   let ws_path = ws.path.clone();
   let mut plan = Plan::new();
 
-  for a in render_hook_group_if(
+  plan.extend_hooks(
     !args.no_hooks,
-    &cfg.pre_remove,
+    &cfg.hooks.pre_remove,
     "pre-remove",
     &args.name,
     &ws_path,
     &obs.repo_root,
-  )? {
-    plan.push(a);
-  }
+  )?;
 
   plan.push(Action::JjWorkspaceForget {
     name: args.name.clone(),
@@ -460,16 +447,14 @@ pub fn plan_remove(
   // repo root (the runtime executes it there). Template vars still reflect
   // the removed workspace's identity since users may need its name/path
   // for cleanup ("docker stop {{ branch | sanitize }}-db" etc.).
-  for a in render_hook_group_if(
+  plan.extend_hooks(
     !args.no_hooks,
-    &cfg.post_remove,
+    &cfg.hooks.post_remove,
     "post-remove",
     &args.name,
     &obs.repo_root,
     &obs.repo_root,
-  )? {
-    plan.push(a);
-  }
+  )?;
 
   if let OutputFormat::Json = args.format {
     plan.push(Action::PrintLine(format_remove_json(
@@ -712,16 +697,14 @@ pub fn plan_prune(
     }
 
     // Emit the same actions as plan_remove for each merged workspace.
-    for a in render_hook_group_if(
+    plan.extend_hooks(
       !args.no_hooks,
-      &cfg.pre_remove,
+      &cfg.hooks.pre_remove,
       "pre-remove",
       name,
       &ws.path,
       &obs.repo_root,
-    )? {
-      plan.push(a);
-    }
+    )?;
 
     plan.push(Action::JjWorkspaceForget { name: name.clone() });
 
@@ -737,16 +720,14 @@ pub fn plan_prune(
 
     plan.push(Action::JjBookmarkDelete { name: name.clone() });
 
-    for a in render_hook_group_if(
+    plan.extend_hooks(
       !args.no_hooks,
-      &cfg.post_remove,
+      &cfg.hooks.post_remove,
       "post-remove",
       name,
       &obs.repo_root,
       &obs.repo_root,
-    )? {
-      plan.push(a);
-    }
+    )?;
 
     pruned.push(name.clone());
   }

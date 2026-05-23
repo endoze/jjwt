@@ -142,13 +142,15 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
 
       let status_results: Vec<_> = status_handles
         .into_iter()
-        .map(|h| h.join().unwrap())
+        .map(|h| h.join().expect("status query thread panicked"))
         .collect();
 
       (
-        bm_handle.join().unwrap(),
-        ci_handle.join().unwrap(),
-        ab_handle.join().unwrap(),
+        bm_handle.join().expect("bookmark query thread panicked"),
+        ci_handle.join().expect("commit info query thread panicked"),
+        ab_handle
+          .join()
+          .expect("ahead-behind query thread panicked"),
         status_results,
       )
     });
@@ -305,7 +307,7 @@ pub fn observe_prune<J: Jj + Sync, F: Fs>(
 
     handles
       .into_iter()
-      .map(|h| h.join().unwrap())
+      .map(|h| h.join().expect("prune query thread panicked"))
       .collect::<Result<Vec<_>>>()
   })?;
 

@@ -1,6 +1,6 @@
 #![cfg(not(tarpaulin_include))]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -37,14 +37,14 @@ impl JjLib {
     let wc_factories = default_working_copy_factories();
 
     let workspace = Workspace::load(&settings, &repo_root, &store_factories, &wc_factories)
-      .map_err(|e| anyhow::anyhow!("failed to load workspace: {e}"))?;
+      .context("failed to load workspace")?;
 
     // Trigger a working-copy snapshot for every workspace so the repo
     // reflects current disk state. Every jj command does this for the
     // current workspace; we do all of them since `list` reads from all.
     {
       let pre_repo = pollster::block_on(workspace.repo_loader().load_at_head())
-        .map_err(|e| anyhow::anyhow!("failed to load repo: {e}"))?;
+        .context("failed to load repo")?;
       let ws_dirs: Vec<PathBuf> = pre_repo
         .view()
         .wc_commit_ids()
@@ -60,8 +60,8 @@ impl JjLib {
     }
 
     // Load repo after snapshot — the op head may have changed.
-    let repo = pollster::block_on(workspace.repo_loader().load_at_head())
-      .map_err(|e| anyhow::anyhow!("failed to load repo: {e}"))?;
+    let repo =
+      pollster::block_on(workspace.repo_loader().load_at_head()).context("failed to load repo")?;
 
     Ok(Self {
       repo: RwLock::new(repo),
@@ -135,10 +135,7 @@ impl JjLib {
   fn get_commit(&self, id: &CommitId) -> Result<Commit> {
     let repo = self.repo();
 
-    repo
-      .store()
-      .get_commit(id)
-      .map_err(|e| anyhow::anyhow!("failed to load commit: {e}"))
+    repo.store().get_commit(id).context("failed to load commit")
   }
 
   /// Resolve the trunk bookmark to a CommitId. Returns None if no trunk.
@@ -154,8 +151,7 @@ impl JjLib {
   fn count_between(&self, roots: &[CommitId], heads: &[CommitId]) -> Result<u32> {
     let repo = self.repo();
 
-    let revset = jj_lib::revset::walk_revs(&*repo, heads, roots)
-      .map_err(|e| anyhow::anyhow!("walk_revs failed: {e}"))?;
+    let revset = jj_lib::revset::walk_revs(&*repo, heads, roots).context("walk_revs failed")?;
 
     let stream = revset.stream();
 
@@ -164,7 +160,7 @@ impl JjLib {
     let mut count = 0u32;
 
     while let Some(item) = pollster::block_on(stream.next()) {
-      let _ = item.map_err(|e| anyhow::anyhow!("revset stream error: {e}"))?;
+      let _ = item.context("revset stream error")?;
       count += 1;
     }
 
@@ -213,8 +209,7 @@ impl Jj for JjLib {
   }
 
   fn workspace_add(&self, _repo_root: &Path, name: &str, path: &Path) -> Result<()> {
-    std::fs::create_dir_all(path)
-      .map_err(|e| anyhow::anyhow!("failed to create workspace dir: {e}"))?;
+    std::fs::create_dir_all(path).context("failed to create workspace dir")?;
 
     let repo = self.repo();
     let repo_path = self.repo_root.join(".jj").join("repo");
@@ -226,7 +221,7 @@ impl Jj for JjLib {
       &jj_lib::local_working_copy::LocalWorkingCopyFactory {},
       WorkspaceNameBuf::from(name),
     ))
-    .map_err(|e| anyhow::anyhow!("workspace add failed: {e}"))?;
+    .context("workspace add failed")?;
 
     self.swap_repo(new_repo);
 
@@ -240,10 +235,10 @@ impl Jj for JjLib {
     let ws_name = WorkspaceNameBuf::from(internal.as_str());
 
     pollster::block_on(tx.repo_mut().remove_wc_commit(&ws_name))
-      .map_err(|e| anyhow::anyhow!("workspace forget failed: {e}"))?;
+      .context("workspace forget failed")?;
 
     let new_repo = pollster::block_on(tx.commit(format!("forget workspace {name}")))
-      .map_err(|e| anyhow::anyhow!("transaction commit failed: {e}"))?;
+      .context("transaction commit failed")?;
 
     self.swap_repo(new_repo);
 
@@ -252,7 +247,7 @@ impl Jj for JjLib {
 
   fn workspace_update_stale(&self, repo_root: &Path, name: &str) -> Result<()> {
     // Complex jj-internal logic. Fall back to subprocess.
-    let jj_path = which::which("jj").map_err(|e| anyhow::anyhow!("jj not found: {e}"))?;
+    let jj_path = which::which("jj").context("jj not found")?;
     let ws_path = workspace_dir(repo_root, name);
 
     let out = std::process::Command::new(&jj_path)
@@ -260,7 +255,7 @@ impl Jj for JjLib {
       .arg("workspace")
       .arg("update-stale")
       .output()
-      .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+      .context("failed to spawn jj workspace update-stale")?;
 
     if !out.status.success() {
       return Err(anyhow::anyhow!(
@@ -282,7 +277,7 @@ impl Jj for JjLib {
       .set_local_bookmark_target(ref_name, RefTarget::normal(commit_id));
 
     let new_repo = pollster::block_on(tx.commit(format!("create bookmark {name}")))
-      .map_err(|e| anyhow::anyhow!("transaction commit failed: {e}"))?;
+      .context("transaction commit failed")?;
 
     self.swap_repo(new_repo);
 
@@ -298,7 +293,7 @@ impl Jj for JjLib {
       .set_local_bookmark_target(ref_name, RefTarget::absent());
 
     let new_repo = pollster::block_on(tx.commit(format!("delete bookmark {name}")))
-      .map_err(|e| anyhow::anyhow!("transaction commit failed: {e}"))?;
+      .context("transaction commit failed")?;
 
     self.swap_repo(new_repo);
 
@@ -328,7 +323,7 @@ impl Jj for JjLib {
     repo
       .index()
       .is_ancestor(bookmark_id, &trunk_id)
-      .map_err(|e| anyhow::anyhow!("index error: {e}"))
+      .context("index error")
   }
 
   fn workspace_is_dirty(&self, _repo_root: &Path, workspace: &str) -> Result<bool> {
@@ -374,7 +369,7 @@ impl Jj for JjLib {
       let commit = repo
         .store()
         .get_commit(commit_id)
-        .map_err(|e| anyhow::anyhow!("failed to load commit for {ws_name}: {e}"))?;
+        .with_context(|| format!("failed to load commit for {ws_name}"))?;
 
       let change_id = commit.change_id();
       let mut commit_short = change_id.reverse_hex();
@@ -504,14 +499,12 @@ impl Jj for JjLib {
   }
 
   fn git_fetch(&self, repo_root: &Path) -> Result<()> {
-    let jj_path = which::which("jj").map_err(|e| anyhow::anyhow!("jj not found: {e}"))?;
+    let jj_path = which::which("jj").context("jj not found")?;
     let mut cmd = std::process::Command::new(jj_path);
 
     cmd.arg("git").arg("fetch").arg("-R").arg(repo_root);
 
-    let out = cmd
-      .output()
-      .map_err(|e| anyhow::anyhow!("jj git fetch: {e}"))?;
+    let out = cmd.output().context("failed to spawn jj git fetch")?;
 
     if !out.status.success() {
       return Err(anyhow::anyhow!(
@@ -542,10 +535,10 @@ impl Jj for JjLib {
     let old_ws_buf = WorkspaceNameBuf::from(old_internal.as_str());
 
     pollster::block_on(tx.repo_mut().remove_wc_commit(&old_ws_buf))
-      .map_err(|e| anyhow::anyhow!("workspace rename failed: {e}"))?;
+      .context("workspace rename failed")?;
 
     let new_repo = pollster::block_on(tx.commit(format!("rename workspace {old} → {new}")))
-      .map_err(|e| anyhow::anyhow!("transaction commit failed: {e}"))?;
+      .context("transaction commit failed")?;
 
     self.swap_repo(new_repo);
 
@@ -572,7 +565,7 @@ impl Jj for JjLib {
       .set_local_bookmark_target(old_ref, RefTarget::absent());
 
     let new_repo = pollster::block_on(tx.commit(format!("rename bookmark {old} → {new}")))
-      .map_err(|e| anyhow::anyhow!("transaction commit failed: {e}"))?;
+      .context("transaction commit failed")?;
 
     self.swap_repo(new_repo);
 
@@ -593,7 +586,7 @@ fn minimal_settings() -> Result<UserSettings> {
 
   config.add_layer(layer);
 
-  UserSettings::from_config(config).map_err(|e| anyhow::anyhow!("settings error: {e}"))
+  UserSettings::from_config(config).context("settings error")
 }
 
 /// Count added/removed lines in a commit's diff vs its parent.

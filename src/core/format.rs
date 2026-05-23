@@ -174,10 +174,9 @@ struct Cell {
 impl Cell {
   /// Create a cell with no ANSI styling (plain == display).
   fn raw(s: String) -> Self {
-    Self {
-      plain: s.clone(),
-      display: s,
-    }
+    let display = s.clone();
+
+    Self { plain: s, display }
   }
 
   /// Create a cell with separate plain (for measurement) and display (with ANSI) strings.
@@ -1019,57 +1018,72 @@ pub fn format_statusline(rows: &[ListRow], current: Option<&str>) -> String {
   }
 }
 
-/// Machine-readable action type for dry-run output.
-enum DryRunKind {
-  WorkspaceAdd,
-  BookmarkCreate,
-  WorkspaceForget,
-  BookmarkDelete,
-  WorkspaceUpdateStale,
-  DeleteDir,
-  DeleteDirBackground,
-  WorkspaceRename,
-  RenameDir,
-  BookmarkRename,
-  RunHook,
-  Exec,
+/// Intermediate representation for a single dry-run action, shared by
+/// both the human-readable and JSON formatters. Each variant carries
+/// only the fields relevant to its action type.
+enum DryRunEntry<'a> {
+  WorkspaceAdd {
+    name: &'a str,
+    path: &'a std::path::Path,
+  },
+  BookmarkCreate {
+    name: &'a str,
+    workspace: &'a str,
+  },
+  WorkspaceForget {
+    name: &'a str,
+  },
+  BookmarkDelete {
+    name: &'a str,
+  },
+  WorkspaceUpdateStale {
+    name: &'a str,
+  },
+  DeleteDir {
+    path: &'a std::path::Path,
+  },
+  DeleteDirBackground {
+    path: &'a std::path::Path,
+  },
+  WorkspaceRename {
+    old_name: &'a str,
+    new_name: &'a str,
+  },
+  RenameDir {
+    from: &'a std::path::Path,
+    to: &'a std::path::Path,
+  },
+  BookmarkRename {
+    old_name: &'a str,
+    new_name: &'a str,
+  },
+  RunHook {
+    name: &'a str,
+    rendered_cmd: &'a str,
+  },
+  Exec {
+    rendered_cmd: &'a str,
+  },
 }
 
-impl DryRunKind {
-  /// JSON-stable string representation.
-  fn as_str(&self) -> &'static str {
+impl DryRunEntry<'_> {
+  /// JSON-stable string representation of the action type.
+  fn as_type_str(&self) -> &'static str {
     match self {
-      Self::WorkspaceAdd => "workspace_add",
-      Self::BookmarkCreate => "bookmark_create",
-      Self::WorkspaceForget => "workspace_forget",
-      Self::BookmarkDelete => "bookmark_delete",
-      Self::WorkspaceUpdateStale => "workspace_update_stale",
-      Self::DeleteDir => "delete_dir",
-      Self::DeleteDirBackground => "delete_dir_background",
-      Self::WorkspaceRename => "workspace_rename",
-      Self::RenameDir => "rename_dir",
-      Self::BookmarkRename => "bookmark_rename",
-      Self::RunHook => "run_hook",
-      Self::Exec => "exec",
+      Self::WorkspaceAdd { .. } => "workspace_add",
+      Self::BookmarkCreate { .. } => "bookmark_create",
+      Self::WorkspaceForget { .. } => "workspace_forget",
+      Self::BookmarkDelete { .. } => "bookmark_delete",
+      Self::WorkspaceUpdateStale { .. } => "workspace_update_stale",
+      Self::DeleteDir { .. } => "delete_dir",
+      Self::DeleteDirBackground { .. } => "delete_dir_background",
+      Self::WorkspaceRename { .. } => "workspace_rename",
+      Self::RenameDir { .. } => "rename_dir",
+      Self::BookmarkRename { .. } => "bookmark_rename",
+      Self::RunHook { .. } => "run_hook",
+      Self::Exec { .. } => "exec",
     }
   }
-}
-
-/// Intermediate representation for a single dry-run action, shared by
-/// both the human-readable and JSON formatters.
-struct DryRunEntry<'a> {
-  /// Action type.
-  kind: DryRunKind,
-  /// Primary name (workspace, bookmark, or hook name).
-  name: Option<&'a str>,
-  /// Primary path (workspace path, directory to delete, source of rename).
-  path: Option<&'a std::path::Path>,
-  /// Secondary name (new name after rename, or workspace for bookmark create).
-  new_name: Option<&'a str>,
-  /// Secondary path (destination of rename/move).
-  new_path: Option<&'a std::path::Path>,
-  /// Rendered command string (for hooks and exec actions).
-  rendered_cmd: Option<&'a str>,
 }
 
 /// Extract the relevant fields from an [`Action`] into a [`DryRunEntry`].
@@ -1077,147 +1091,59 @@ struct DryRunEntry<'a> {
 /// (e.g. `PrintLine`).
 fn dry_run_entry(action: &Action) -> Option<DryRunEntry<'_>> {
   match action {
-    Action::JjWorkspaceAdd { name, path } => Some(DryRunEntry {
-      kind: DryRunKind::WorkspaceAdd,
-      name: Some(name),
-      path: Some(path),
-      new_name: None,
-      new_path: None,
-      rendered_cmd: None,
-    }),
-    Action::JjBookmarkCreate { name, workspace } => Some(DryRunEntry {
-      kind: DryRunKind::BookmarkCreate,
-      name: Some(name),
-      path: None,
-      new_name: Some(workspace),
-      new_path: None,
-      rendered_cmd: None,
-    }),
-    Action::JjWorkspaceForget { name } => Some(DryRunEntry {
-      kind: DryRunKind::WorkspaceForget,
-      name: Some(name),
-      path: None,
-      new_name: None,
-      new_path: None,
-      rendered_cmd: None,
-    }),
-    Action::JjBookmarkDelete { name } => Some(DryRunEntry {
-      kind: DryRunKind::BookmarkDelete,
-      name: Some(name),
-      path: None,
-      new_name: None,
-      new_path: None,
-      rendered_cmd: None,
-    }),
-    Action::JjWorkspaceUpdateStale { name } => Some(DryRunEntry {
-      kind: DryRunKind::WorkspaceUpdateStale,
-      name: Some(name),
-      path: None,
-      new_name: None,
-      new_path: None,
-      rendered_cmd: None,
-    }),
-    Action::DeleteDir { path } => Some(DryRunEntry {
-      kind: DryRunKind::DeleteDir,
-      name: None,
-      path: Some(path),
-      new_name: None,
-      new_path: None,
-      rendered_cmd: None,
-    }),
-    Action::DeleteDirBackground { path } => Some(DryRunEntry {
-      kind: DryRunKind::DeleteDirBackground,
-      name: None,
-      path: Some(path),
-      new_name: None,
-      new_path: None,
-      rendered_cmd: None,
-    }),
-    Action::JjWorkspaceRename { old_name, new_name } => Some(DryRunEntry {
-      kind: DryRunKind::WorkspaceRename,
-      name: Some(old_name),
-      path: None,
-      new_name: Some(new_name),
-      new_path: None,
-      rendered_cmd: None,
-    }),
-    Action::RenameDir { from, to } => Some(DryRunEntry {
-      kind: DryRunKind::RenameDir,
-      name: None,
-      path: Some(from),
-      new_name: None,
-      new_path: Some(to),
-      rendered_cmd: None,
-    }),
-    Action::JjBookmarkRename { old_name, new_name } => Some(DryRunEntry {
-      kind: DryRunKind::BookmarkRename,
-      name: Some(old_name),
-      path: None,
-      new_name: Some(new_name),
-      new_path: None,
-      rendered_cmd: None,
-    }),
+    Action::JjWorkspaceAdd { name, path } => Some(DryRunEntry::WorkspaceAdd { name, path }),
+    Action::JjBookmarkCreate { name, workspace } => {
+      Some(DryRunEntry::BookmarkCreate { name, workspace })
+    }
+    Action::JjWorkspaceForget { name } => Some(DryRunEntry::WorkspaceForget { name }),
+    Action::JjBookmarkDelete { name } => Some(DryRunEntry::BookmarkDelete { name }),
+    Action::JjWorkspaceUpdateStale { name } => Some(DryRunEntry::WorkspaceUpdateStale { name }),
+    Action::DeleteDir { path } => Some(DryRunEntry::DeleteDir { path }),
+    Action::DeleteDirBackground { path } => Some(DryRunEntry::DeleteDirBackground { path }),
+    Action::JjWorkspaceRename { old_name, new_name } => {
+      Some(DryRunEntry::WorkspaceRename { old_name, new_name })
+    }
+    Action::RenameDir { from, to } => Some(DryRunEntry::RenameDir { from, to }),
+    Action::JjBookmarkRename { old_name, new_name } => {
+      Some(DryRunEntry::BookmarkRename { old_name, new_name })
+    }
     Action::RunHook {
       name, rendered_cmd, ..
-    } => Some(DryRunEntry {
-      kind: DryRunKind::RunHook,
-      name: Some(name),
-      path: None,
-      new_name: None,
-      new_path: None,
-      rendered_cmd: Some(rendered_cmd),
-    }),
-    Action::Exec { rendered_cmd, .. } => Some(DryRunEntry {
-      kind: DryRunKind::Exec,
-      name: None,
-      path: None,
-      new_name: None,
-      new_path: None,
-      rendered_cmd: Some(rendered_cmd),
-    }),
+    } => Some(DryRunEntry::RunHook { name, rendered_cmd }),
+    Action::Exec { rendered_cmd, .. } => Some(DryRunEntry::Exec { rendered_cmd }),
     Action::PrintLine(_) => None,
   }
 }
 
 /// Format a single [`DryRunEntry`] as a human-readable line.
 fn format_dry_run_line(e: &DryRunEntry<'_>) -> String {
-  match e.kind {
-    DryRunKind::WorkspaceAdd => format!(
-      "would create workspace '{}' at {}",
-      e.name.unwrap(),
-      e.path.unwrap().display()
-    ),
-    DryRunKind::BookmarkCreate => format!("would create bookmark '{}'", e.name.unwrap()),
-    DryRunKind::WorkspaceForget => format!("would forget workspace '{}'", e.name.unwrap()),
-    DryRunKind::BookmarkDelete => format!("would delete bookmark '{}'", e.name.unwrap()),
-    DryRunKind::WorkspaceUpdateStale => {
-      format!("would update stale workspace '{}'", e.name.unwrap())
+  match e {
+    DryRunEntry::WorkspaceAdd { name, path } => {
+      format!("would create workspace '{name}' at {}", path.display())
     }
-    DryRunKind::DeleteDir => format!("would delete {}", e.path.unwrap().display()),
-    DryRunKind::DeleteDirBackground => {
-      format!("would delete {} (background)", e.path.unwrap().display())
+    DryRunEntry::BookmarkCreate { name, .. } => format!("would create bookmark '{name}'"),
+    DryRunEntry::WorkspaceForget { name } => format!("would forget workspace '{name}'"),
+    DryRunEntry::BookmarkDelete { name } => format!("would delete bookmark '{name}'"),
+    DryRunEntry::WorkspaceUpdateStale { name } => {
+      format!("would update stale workspace '{name}'")
     }
-    DryRunKind::WorkspaceRename => format!(
-      "would rename workspace '{}' \u{2192} '{}'",
-      e.name.unwrap(),
-      e.new_name.unwrap()
-    ),
-    DryRunKind::RenameDir => format!(
-      "would move {} \u{2192} {}",
-      e.path.unwrap().display(),
-      e.new_path.unwrap().display()
-    ),
-    DryRunKind::BookmarkRename => format!(
-      "would rename bookmark '{}' \u{2192} '{}'",
-      e.name.unwrap(),
-      e.new_name.unwrap()
-    ),
-    DryRunKind::RunHook => format!(
-      "would run hook '{}': {}",
-      e.name.unwrap(),
-      e.rendered_cmd.unwrap()
-    ),
-    DryRunKind::Exec => format!("would exec: {}", e.rendered_cmd.unwrap()),
+    DryRunEntry::DeleteDir { path } => format!("would delete {}", path.display()),
+    DryRunEntry::DeleteDirBackground { path } => {
+      format!("would delete {} (background)", path.display())
+    }
+    DryRunEntry::WorkspaceRename { old_name, new_name } => {
+      format!("would rename workspace '{old_name}' \u{2192} '{new_name}'")
+    }
+    DryRunEntry::RenameDir { from, to } => {
+      format!("would move {} \u{2192} {}", from.display(), to.display())
+    }
+    DryRunEntry::BookmarkRename { old_name, new_name } => {
+      format!("would rename bookmark '{old_name}' \u{2192} '{new_name}'")
+    }
+    DryRunEntry::RunHook { name, rendered_cmd } => {
+      format!("would run hook '{name}': {rendered_cmd}")
+    }
+    DryRunEntry::Exec { rendered_cmd } => format!("would exec: {rendered_cmd}"),
   }
 }
 
@@ -1225,47 +1151,41 @@ fn format_dry_run_line(e: &DryRunEntry<'_>) -> String {
 fn format_dry_run_value(e: &DryRunEntry<'_>) -> Value {
   let mut m = Map::new();
 
-  m.insert("type".into(), Value::String(e.kind.as_str().into()));
+  m.insert("type".into(), Value::String(e.as_type_str().into()));
 
-  if let Some(name) = e.name {
-    match e.kind {
-      DryRunKind::WorkspaceRename | DryRunKind::BookmarkRename => {
-        m.insert("old_name".into(), Value::String(name.into()));
-      }
-      _ => {
-        m.insert("name".into(), Value::String(name.into()));
-      }
+  match e {
+    DryRunEntry::WorkspaceAdd { name, path } => {
+      m.insert("name".into(), Value::String((*name).into()));
+      m.insert("path".into(), Value::String(path.display().to_string()));
     }
-  }
-
-  if let Some(path) = e.path {
-    match e.kind {
-      DryRunKind::RenameDir => {
-        m.insert("from".into(), Value::String(path.display().to_string()));
-      }
-      _ => {
-        m.insert("path".into(), Value::String(path.display().to_string()));
-      }
+    DryRunEntry::BookmarkCreate { name, workspace } => {
+      m.insert("name".into(), Value::String((*name).into()));
+      m.insert("workspace".into(), Value::String((*workspace).into()));
     }
-  }
-
-  if let Some(new_name) = e.new_name {
-    match e.kind {
-      DryRunKind::BookmarkCreate => {
-        m.insert("workspace".into(), Value::String(new_name.into()));
-      }
-      _ => {
-        m.insert("new_name".into(), Value::String(new_name.into()));
-      }
+    DryRunEntry::WorkspaceForget { name }
+    | DryRunEntry::BookmarkDelete { name }
+    | DryRunEntry::WorkspaceUpdateStale { name } => {
+      m.insert("name".into(), Value::String((*name).into()));
     }
-  }
-
-  if let Some(new_path) = e.new_path {
-    m.insert("to".into(), Value::String(new_path.display().to_string()));
-  }
-
-  if let Some(cmd) = e.rendered_cmd {
-    m.insert("rendered_cmd".into(), Value::String(cmd.into()));
+    DryRunEntry::DeleteDir { path } | DryRunEntry::DeleteDirBackground { path } => {
+      m.insert("path".into(), Value::String(path.display().to_string()));
+    }
+    DryRunEntry::WorkspaceRename { old_name, new_name }
+    | DryRunEntry::BookmarkRename { old_name, new_name } => {
+      m.insert("old_name".into(), Value::String((*old_name).into()));
+      m.insert("new_name".into(), Value::String((*new_name).into()));
+    }
+    DryRunEntry::RenameDir { from, to } => {
+      m.insert("from".into(), Value::String(from.display().to_string()));
+      m.insert("to".into(), Value::String(to.display().to_string()));
+    }
+    DryRunEntry::RunHook { name, rendered_cmd } => {
+      m.insert("name".into(), Value::String((*name).into()));
+      m.insert("rendered_cmd".into(), Value::String((*rendered_cmd).into()));
+    }
+    DryRunEntry::Exec { rendered_cmd } => {
+      m.insert("rendered_cmd".into(), Value::String((*rendered_cmd).into()));
+    }
   }
 
   Value::Object(m)
