@@ -434,3 +434,267 @@ fn create_with_template_using_filters() {
   // sanitize replaces `/` with `-`
   assert_eq!(add_path, Some(PathBuf::from("/repo/.wt/feat-x")));
 }
+
+#[test]
+fn create_json_format_emits_json_object() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    format: OutputFormat::Json,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let json_line = plan.actions.iter().find_map(|a| match a {
+    Action::PrintLine(s) => Some(s.clone()),
+    _ => None,
+  });
+
+  let parsed: serde_json::Value =
+    serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");
+
+  assert_eq!(parsed["name"], "feat-x");
+  assert_eq!(parsed["path"], "/repo/.worktrees/feat-x");
+  assert_eq!(parsed["created"], true);
+  assert!(parsed.get("execute").is_none());
+}
+
+#[test]
+fn switch_existing_json_format_emits_json_with_created_false() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: false,
+    format: OutputFormat::Json,
+    ..Default::default()
+  };
+  let mut obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  obs.workspaces.push(Workspace {
+    name: "feat-x".into(),
+    path: PathBuf::from("/repo/.worktrees/feat-x"),
+    stale: false,
+  });
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let json_line = plan.actions.iter().find_map(|a| match a {
+    Action::PrintLine(s) => Some(s.clone()),
+    _ => None,
+  });
+
+  let parsed: serde_json::Value =
+    serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");
+
+  assert_eq!(parsed["name"], "feat-x");
+  assert_eq!(parsed["created"], false);
+}
+
+#[test]
+fn create_json_format_with_execute_includes_rendered_command() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    format: OutputFormat::Json,
+    execute: Some("echo {{ branch }}".into()),
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let json_line = plan.actions.iter().find_map(|a| match a {
+    Action::PrintLine(s) => Some(s.clone()),
+    _ => None,
+  });
+
+  let parsed: serde_json::Value =
+    serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");
+
+  assert_eq!(parsed["execute"], "echo feat-x");
+}
+
+#[test]
+fn switch_text_format_with_execute_emits_cd_and_exec_lines() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    format: OutputFormat::Text,
+    execute: Some("make build".into()),
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let print_lines: Vec<&str> = plan
+    .actions
+    .iter()
+    .filter_map(|a| match a {
+      Action::PrintLine(s) => Some(s.as_str()),
+      _ => None,
+    })
+    .collect();
+
+  assert!(print_lines.iter().any(|l| l.starts_with("cd:")));
+  assert!(print_lines.iter().any(|l| l.starts_with("exec:")));
+}
+
+#[test]
+fn create_with_clobber_emits_delete_dir_before_add() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    clobber: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_path_exists: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let kinds: Vec<&str> = plan
+    .actions
+    .iter()
+    .map(|a| match a {
+      Action::DeleteDir { .. } => "del",
+      Action::JjWorkspaceAdd { .. } => "add",
+      _ => "other",
+    })
+    .filter(|k| *k != "other")
+    .collect();
+
+  assert_eq!(kinds, vec!["del", "add"]);
+}
+
+#[test]
+fn create_without_clobber_errors_when_path_exists() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    clobber: false,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_path_exists: true,
+    ..Default::default()
+  };
+
+  let err = plan_switch(&cfg, &args, &obs).unwrap_err();
+
+  assert!(matches!(err, CoreError::TargetPathOccupied(_)));
+}
+
+#[test]
+fn clobber_inside_other_workspace_errors() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    clobber: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_path_exists: true,
+    workspaces: vec![Workspace {
+      name: "other".into(),
+      path: PathBuf::from("/repo/.worktrees"),
+      stale: false,
+    }],
+    ..Default::default()
+  };
+
+  let err = plan_switch(&cfg, &args, &obs).unwrap_err();
+
+  assert!(matches!(err, CoreError::TargetPathInsideOtherWorkspace(_)));
+}
+
+#[test]
+fn switch_existing_with_no_hooks_skips_hooks() {
+  let cfg = MergedConfig::from_project(Config {
+    pre_switch: vec![one_hook("ps", "echo pre-switch")],
+    post_switch: vec![one_hook("pe", "echo post-switch")],
+    ..Default::default()
+  });
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: false,
+    no_hooks: true,
+    format: OutputFormat::Text,
+    ..Default::default()
+  };
+  let mut obs = observed_clean();
+
+  obs.workspaces.push(Workspace {
+    name: "feat-x".into(),
+    path: PathBuf::from("/repo/.worktrees/feat-x"),
+    stale: false,
+  });
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  assert!(
+    !plan
+      .actions
+      .iter()
+      .any(|a| matches!(a, Action::RunHook { .. })),
+    "no_hooks should suppress all hooks"
+  );
+  assert_eq!(plan.actions.len(), 1);
+  assert!(matches!(plan.actions[0], Action::PrintLine(_)));
+}
+
+#[test]
+fn create_default_workspace_name_uses_repo_root() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "default".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let add_path = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { path, .. } => Some(path.clone()),
+    _ => None,
+  });
+
+  assert_eq!(add_path, Some(PathBuf::from("/repo")));
+}

@@ -1,6 +1,7 @@
 use crate::core::types::{Config, CoreError, HookGroup};
 use serde::Deserialize;
 
+/// Parse a TOML string into a `Config`, mapping parse failures to `CoreError`.
 pub fn parse(src: &str) -> Result<Config, CoreError> {
   toml::from_str(src).map_err(|e| CoreError::ConfigParse(e.to_string()))
 }

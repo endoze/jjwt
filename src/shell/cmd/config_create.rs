@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 

@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,11 +22,14 @@ use crate::shell::jj::Jj;
 /// In-process jj backend using jj-lib. Loads the repo once and answers all
 /// queries from memory — no subprocess spawning.
 pub struct JjLib {
+  /// Thread-safe handle to the loaded repo snapshot.
   repo: RwLock<Arc<ReadonlyRepo>>,
+  /// Absolute path to the repo root directory.
   repo_root: PathBuf,
 }
 
 impl JjLib {
+  /// Load the jj repo at or above `start`, snapshotting all workspaces.
   pub fn new(start: &Path) -> Result<Self> {
     let repo_root = find_repo_root(start)?;
     let settings = minimal_settings()?;

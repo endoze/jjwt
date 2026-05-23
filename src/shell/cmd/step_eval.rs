@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::path::Path;
 

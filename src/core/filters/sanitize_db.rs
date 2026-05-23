@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 // Ported from https://github.com/max-sixty/worktrunk (sanitize_db).
 
 use crate::core::filters::hash::short_hash;

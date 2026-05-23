@@ -4,6 +4,7 @@ use crate::core::types::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Compute the on-disk path for a workspace, using the template if configured.
 fn workspace_path(root: &Path, name: &str, template: Option<&str>) -> Result<PathBuf, CoreError> {
   if name == "default" {
     return Ok(root.to_path_buf());
@@ -22,6 +23,7 @@ fn workspace_path(root: &Path, name: &str, template: Option<&str>) -> Result<Pat
   }
 }
 
+/// Build the environment variable list injected into hook subprocesses.
 fn hook_env(
   workspace: &str,
   ws_path: &Path,
@@ -67,6 +69,7 @@ fn render_ctx(
   }
 }
 
+/// Render all hooks in the given groups into `RunHook` actions.
 fn render_hook_group(
   groups: &[SourcedHookGroup],
   hook_type: &str,
@@ -113,6 +116,7 @@ fn render_hook_group_if(
   }
 }
 
+/// Build a plan for the `switch` subcommand (create or switch to a workspace).
 pub fn plan_switch(
   cfg: &MergedConfig,
   args: &SwitchArgs,
@@ -355,6 +359,7 @@ fn emit_switch_output(
   Ok(())
 }
 
+/// Build a plan for the `remove` subcommand (forget workspace and clean up).
 pub fn plan_remove(
   cfg: &MergedConfig,
   args: &RemoveArgs,
@@ -517,6 +522,7 @@ pub fn plan_alias(
   Ok(plan)
 }
 
+/// Build a plan for the `hook` subcommand (manual single-hook invocation).
 pub fn plan_hook(
   cfg: &MergedConfig,
   args: &HookArgs,
@@ -576,6 +582,7 @@ pub fn plan_hook(
   Ok(plan)
 }
 
+/// Build a plan for the `relocate` subcommand (rename workspace and directory).
 pub fn plan_relocate(
   cfg: &MergedConfig,
   args: &RelocateArgs,
@@ -660,6 +667,7 @@ pub fn plan_relocate(
   Ok(plan)
 }
 
+/// Build a plan for the `prune` subcommand (remove all merged workspaces).
 pub fn plan_prune(
   cfg: &MergedConfig,
   args: &PruneArgs,
@@ -776,6 +784,7 @@ pub fn plan_prune(
   Ok(plan)
 }
 
+/// Derive the trunk relationship from ahead/behind commit counts.
 fn trunk_rel(ahead: u32, behind: u32) -> Option<TrunkRel> {
   match (ahead, behind) {
     (0, 0) => Some(TrunkRel::IsTrunk),
@@ -785,6 +794,7 @@ fn trunk_rel(ahead: u32, behind: u32) -> Option<TrunkRel> {
   }
 }
 
+/// Transform an observed workspace row into a renderable `ListRow`.
 fn build_list_row(
   cfg: &MergedConfig,
   obs_row: &ObservedListRow,
@@ -874,6 +884,7 @@ fn build_branch_row(name: &str) -> ListRow {
   }
 }
 
+/// Build a plan for the `list` subcommand (render workspace table).
 pub fn plan_list(
   cfg: &MergedConfig,
   obs: &ObservedListState,
@@ -917,6 +928,7 @@ pub fn plan_list(
   Ok(plan)
 }
 
+/// Build a plan for `hook show` (list all configured hooks).
 pub fn plan_hook_show(
   cfg: &MergedConfig,
   expanded: bool,
@@ -931,10 +943,10 @@ pub fn plan_hook_show(
 
   for (hook_type, groups) in cfg.all_hook_groups() {
     for shg in groups {
-      if let Some(filter) = source_filter {
-        if shg.source != filter {
-          continue;
-        }
+      if let Some(filter) = source_filter
+        && shg.source != filter
+      {
+        continue;
       }
 
       for (name, tmpl) in &shg.group {
@@ -1093,6 +1105,7 @@ fn current_workspace_or_root(obs: &ObservedState) -> (String, PathBuf) {
   }
 }
 
+/// Truncate a string to `max` characters, appending `...` if shortened.
 fn truncate_line(s: &str, max: usize) -> String {
   let first_line = s.lines().next().unwrap_or(s);
 
@@ -1100,5 +1113,30 @@ fn truncate_line(s: &str, max: usize) -> String {
     format!("{}...", &first_line[..max - 3])
   } else {
     first_line.to_string()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn trunk_rel_is_trunk() {
+    assert_eq!(trunk_rel(0, 0), Some(TrunkRel::IsTrunk));
+  }
+
+  #[test]
+  fn trunk_rel_ancestor() {
+    assert_eq!(trunk_rel(0, 5), Some(TrunkRel::Ancestor));
+  }
+
+  #[test]
+  fn trunk_rel_ahead() {
+    assert_eq!(trunk_rel(3, 0), Some(TrunkRel::Ahead));
+  }
+
+  #[test]
+  fn trunk_rel_diverged() {
+    assert_eq!(trunk_rel(2, 4), Some(TrunkRel::Diverged));
   }
 }

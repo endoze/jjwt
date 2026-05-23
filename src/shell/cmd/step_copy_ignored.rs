@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -87,6 +89,7 @@ pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
   Ok(())
 }
 
+/// List all tracked files in a workspace via `jj file list`.
 fn tracked_files(_jj: &JjLib, repo_root: &Path, workspace: &str) -> Result<HashSet<PathBuf>> {
   let ws_path = if workspace == "default" {
     repo_root.to_path_buf()

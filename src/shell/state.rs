@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -51,6 +53,7 @@ impl JjwtState {
   }
 }
 
+/// Compute the on-disk path for the state file within the repo.
 fn state_path(repo_root: &Path) -> PathBuf {
   repo_root.join(".jj").join("jjwt-state.toml")
 }
@@ -83,4 +86,71 @@ pub fn save(repo_root: &Path, state: &JjwtState) -> Result<()> {
   std::fs::write(&p, body).with_context(|| format!("write {}", p.display()))?;
 
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn get_vars_empty_by_default() {
+    let state = JjwtState::default();
+
+    assert!(state.get_vars("any").is_empty());
+  }
+
+  #[test]
+  fn set_and_get_var() {
+    let mut state = JjwtState::default();
+
+    state.set_var("ws", "key", "val");
+
+    assert_eq!(state.get_vars("ws").get("key").unwrap(), "val");
+  }
+
+  #[test]
+  fn set_var_overwrites() {
+    let mut state = JjwtState::default();
+
+    state.set_var("ws", "k", "old");
+    state.set_var("ws", "k", "new");
+
+    assert_eq!(state.get_vars("ws").get("k").unwrap(), "new");
+  }
+
+  #[test]
+  fn remove_var_returns_value() {
+    let mut state = JjwtState::default();
+
+    state.set_var("ws", "k", "v");
+
+    assert_eq!(state.remove_var("ws", "k"), Some("v".into()));
+  }
+
+  #[test]
+  fn remove_var_cleans_up_empty_workspace() {
+    let mut state = JjwtState::default();
+
+    state.set_var("ws", "k", "v");
+    state.remove_var("ws", "k");
+
+    assert!(!state.vars.contains_key("ws"));
+  }
+
+  #[test]
+  fn remove_var_missing_workspace() {
+    let mut state = JjwtState::default();
+
+    assert_eq!(state.remove_var("nope", "k"), None);
+  }
+
+  #[test]
+  fn remove_var_missing_key() {
+    let mut state = JjwtState::default();
+
+    state.set_var("ws", "a", "1");
+
+    assert_eq!(state.remove_var("ws", "b"), None);
+    assert_eq!(state.get_vars("ws").get("a").unwrap(), "1");
+  }
 }

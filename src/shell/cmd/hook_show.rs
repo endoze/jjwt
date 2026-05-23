@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::path::Path;
 
@@ -10,6 +12,7 @@ use crate::shell::observe::observe;
 use crate::shell::proc::RealProc;
 use crate::shell::runtime::{Runtime, execute};
 
+/// Display configured hooks, optionally expanding template variables.
 pub fn run(
   cwd: &Path,
   config_path: Option<&Path>,

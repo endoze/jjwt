@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 // Ported from https://github.com/max-sixty/worktrunk (dirname/basename filters).
 
 /// POSIX-style parent-of-path. `/a/b/c` → `/a/b`. No trailing slash.

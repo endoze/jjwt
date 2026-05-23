@@ -1,8 +1,11 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::path::Path;
 
 use crate::core::types::{CommitInfo, Workspace};
 
+/// Abstraction over jj operations for testability.
 pub trait Jj {
   /// Detect the repo root (parent of `.jj/`); errors if not in a jj repo.
   fn repo_root(&self, start: &Path) -> Result<std::path::PathBuf>;
@@ -26,7 +29,7 @@ pub trait Jj {
   fn workspace_is_dirty(&self, repo_root: &Path, workspace: &str) -> Result<bool>;
   /// Per-workspace status flags (modified, untracked) for list rendering.
   /// Only collects data that cannot be obtained from
-  /// [`workspace_commit_info_batch`] (which handles commit metadata,
+  /// [`Jj::workspace_commit_info_batch`] (which handles commit metadata,
   /// conflicts, and diff stats).
   fn workspace_status(&self, repo_root: &Path, workspace: &str) -> Result<(bool, bool)>;
   /// Batch-fetch commit metadata, conflict status, and diff stats for all
@@ -81,12 +84,14 @@ pub struct JjCli {
 }
 
 impl JjCli {
+  /// Locate the `jj` binary on PATH and create a new CLI adapter.
   pub fn new() -> anyhow::Result<Self> {
     let jj_path = which::which("jj").map_err(|e| anyhow::anyhow!("jj not found on PATH: {e}"))?;
     Ok(Self { jj_path })
   }
 }
 
+/// Execute a jj command and return output, failing on non-zero exit.
 fn run(cmd: &mut std::process::Command) -> Result<std::process::Output> {
   let out = cmd
     .output()
@@ -726,6 +731,7 @@ impl Jj for JjCli {
   }
 }
 
+/// Count the number of commits matching a revset expression.
 fn revset_count(jj: &Path, repo_root: &Path, revset: &str) -> Result<u32> {
   let out = run(
     std::process::Command::new(jj)
@@ -806,6 +812,7 @@ pub(crate) fn parse_status(text: &str) -> (bool, bool, bool) {
   (modified, untracked, conflicts)
 }
 
+/// Check if a line represents a file change (starts with M/A/D/R/C + space).
 fn is_change_line(s: &str) -> bool {
   let mut chars = s.chars();
   let first = chars.next();

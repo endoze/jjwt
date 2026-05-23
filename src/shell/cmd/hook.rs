@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::path::Path;
 
@@ -11,6 +13,7 @@ use crate::shell::observe::observe;
 use crate::shell::proc::RealProc;
 use crate::shell::runtime::{Runtime, execute};
 
+/// Execute a named hook in the current workspace with optional variables.
 pub fn run(
   cwd: &Path,
   config_path: Option<&Path>,

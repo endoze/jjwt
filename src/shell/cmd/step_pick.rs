@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::path::Path;
 
@@ -37,6 +39,7 @@ pub fn run(cwd: &Path) -> Result<()> {
   Ok(())
 }
 
+/// Launch the skim fuzzy picker and return the selected workspace name.
 #[cfg(feature = "picker")]
 fn pick_interactive(items: &[String]) -> Result<String> {
   use skim::prelude::*;
@@ -71,6 +74,7 @@ fn pick_interactive(items: &[String]) -> Result<String> {
   Ok(selected.output().to_string())
 }
 
+/// Stub when the `picker` feature is not enabled.
 #[cfg(not(feature = "picker"))]
 fn pick_interactive(_items: &[String]) -> Result<String> {
   anyhow::bail!("interactive picker not available (compile with --features picker)")

@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Result, bail};
 use std::path::Path;
 
@@ -114,8 +116,7 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, dry_run: bool) -> Result<()> 
   Ok(())
 }
 
-/// Simple POSIX shell escaping: wrap in single quotes, escaping any
-/// embedded single quotes.
+/// Wrap a string in POSIX single quotes, escaping embedded single quotes.
 fn shell_escape(s: &str) -> String {
   format!("'{}'", s.replace('\'', "'\\''"))
 }

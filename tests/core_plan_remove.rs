@@ -417,3 +417,132 @@ fn sync_remove_when_background_not_configured() {
 
   assert!(has_sync_delete, "should have DeleteDir");
 }
+
+#[test]
+fn remove_json_format_emits_json_with_bookmark_deleted_true() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    force: true,
+    format: OutputFormat::Json,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    workspaces: vec![Workspace {
+      name: "feat-x".into(),
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+      stale: false,
+    }],
+    target_bookmark_exists: true,
+    target_bookmark_merged: true,
+    ..Default::default()
+  };
+
+  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+
+  let json_line = plan
+    .actions
+    .iter()
+    .filter_map(|a| match a {
+      Action::PrintLine(s) => Some(s.clone()),
+      _ => None,
+    })
+    .last();
+
+  let parsed: serde_json::Value =
+    serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");
+
+  assert_eq!(parsed["name"], "feat-x");
+  assert_eq!(parsed["path"], "/repo/.worktrees/feat-x");
+  assert_eq!(parsed["bookmark_deleted"], true);
+}
+
+#[test]
+fn remove_json_format_bookmark_deleted_false_when_no_delete_branch() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    no_delete_branch: true,
+    format: OutputFormat::Json,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    workspaces: vec![Workspace {
+      name: "feat-x".into(),
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+      stale: false,
+    }],
+    target_bookmark_exists: true,
+    target_bookmark_merged: true,
+    ..Default::default()
+  };
+
+  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+
+  let json_line = plan
+    .actions
+    .iter()
+    .filter_map(|a| match a {
+      Action::PrintLine(s) => Some(s.clone()),
+      _ => None,
+    })
+    .last();
+
+  let parsed: serde_json::Value =
+    serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");
+
+  assert_eq!(parsed["bookmark_deleted"], false);
+}
+
+#[test]
+fn remove_text_format_does_not_emit_json() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    force: true,
+    format: OutputFormat::Text,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    workspaces: vec![Workspace {
+      name: "feat-x".into(),
+      path: PathBuf::from("/repo/.worktrees/feat-x"),
+      stale: false,
+    }],
+    target_bookmark_exists: true,
+    target_bookmark_merged: true,
+    ..Default::default()
+  };
+
+  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+
+  let has_json = plan.actions.iter().any(|a| match a {
+    Action::PrintLine(s) => s.starts_with('{'),
+    _ => false,
+  });
+
+  assert!(!has_json, "Text format should not emit JSON");
+}
+
+#[test]
+fn remove_not_jj_repo_errors() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = RemoveArgs {
+    name: "feat-x".into(),
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    is_jj_repo: false,
+    ..Default::default()
+  };
+
+  let err = plan_remove(&cfg, &args, &obs).unwrap_err();
+
+  assert!(matches!(err, CoreError::NotJjRepo));
+}

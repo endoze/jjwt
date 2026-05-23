@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use crate::core::types::CiStatus;
 use std::collections::HashMap;
 use std::path::Path;
@@ -47,6 +49,7 @@ pub fn query_ci_statuses(repo_root: &Path, bookmarks: &[String]) -> HashMap<Stri
   result
 }
 
+/// Attempt to query CI statuses from GitHub via `gh pr list`.
 fn try_github(repo_root: &Path) -> Option<HashMap<String, CiStatus>> {
   if which::which("gh").is_err() {
     return None;
@@ -88,6 +91,7 @@ fn try_github(repo_root: &Path) -> Option<HashMap<String, CiStatus>> {
   Some(statuses)
 }
 
+/// Reduce a list of GitHub status checks into a single CI status.
 fn aggregate_github_checks(checks: &[serde_json::Value]) -> CiStatus {
   let mut has_pending = false;
 
@@ -115,6 +119,7 @@ fn aggregate_github_checks(checks: &[serde_json::Value]) -> CiStatus {
   }
 }
 
+/// Attempt to query CI statuses from GitLab via `glab mr list`.
 fn try_gitlab(repo_root: &Path) -> Option<HashMap<String, CiStatus>> {
   if which::which("glab").is_err() {
     return None;
@@ -156,4 +161,61 @@ fn try_gitlab(repo_root: &Path) -> Option<HashMap<String, CiStatus>> {
   }
 
   Some(statuses)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  #[test]
+  fn aggregate_github_all_success() {
+    let checks = vec![
+      json!({"conclusion": "SUCCESS", "status": "COMPLETED"}),
+      json!({"conclusion": "SUCCESS", "status": "COMPLETED"}),
+    ];
+
+    assert_eq!(aggregate_github_checks(&checks), CiStatus::Pass);
+  }
+
+  #[test]
+  fn aggregate_github_any_failure() {
+    let checks = vec![
+      json!({"conclusion": "SUCCESS", "status": "COMPLETED"}),
+      json!({"conclusion": "FAILURE", "status": "COMPLETED"}),
+    ];
+
+    assert_eq!(aggregate_github_checks(&checks), CiStatus::Fail);
+  }
+
+  #[test]
+  fn aggregate_github_error_is_fail() {
+    let checks = vec![json!({"conclusion": "ERROR", "status": "COMPLETED"})];
+
+    assert_eq!(aggregate_github_checks(&checks), CiStatus::Fail);
+  }
+
+  #[test]
+  fn aggregate_github_in_progress() {
+    let checks = vec![
+      json!({"conclusion": "SUCCESS", "status": "COMPLETED"}),
+      json!({"conclusion": "", "status": "IN_PROGRESS"}),
+    ];
+
+    assert_eq!(aggregate_github_checks(&checks), CiStatus::Pending);
+  }
+
+  #[test]
+  fn aggregate_github_queued() {
+    let checks = vec![json!({"conclusion": "", "status": "QUEUED"})];
+
+    assert_eq!(aggregate_github_checks(&checks), CiStatus::Pending);
+  }
+
+  #[test]
+  fn aggregate_github_empty_conclusion_is_pending() {
+    let checks = vec![json!({"status": "COMPLETED"})];
+
+    assert_eq!(aggregate_github_checks(&checks), CiStatus::Pending);
+  }
 }

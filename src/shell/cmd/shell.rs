@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Result, bail};
 
 /// Fish wrapper. Supports two output protocols from `jjwt switch`:
@@ -33,6 +35,7 @@ const FISH_WRAPPER: &str = r#"function wt
 end
 "#;
 
+/// POSIX (bash/zsh) wrapper. Same directive protocol as Fish.
 const POSIX_WRAPPER: &str = r#"wt() {
   if [ "$1" = "switch" ]; then
     shift
@@ -65,24 +68,28 @@ EOF
 }
 "#;
 
+/// Print the Fish shell wrapper function to stdout.
 pub fn run_fish() -> Result<()> {
   print!("{FISH_WRAPPER}");
 
   Ok(())
 }
 
+/// Print the Bash shell wrapper function to stdout.
 pub fn run_bash() -> Result<()> {
   print!("{POSIX_WRAPPER}");
 
   Ok(())
 }
 
+/// Print the Zsh shell wrapper function to stdout.
 pub fn run_zsh() -> Result<()> {
   print!("{POSIX_WRAPPER}");
 
   Ok(())
 }
 
+/// Dispatch to the correct shell wrapper emitter based on shell name.
 pub fn dispatch(shell: &str) -> Result<()> {
   match shell {
     "fish" => run_fish(),

@@ -5,30 +5,46 @@ use anstyle::{AnsiColor, Color, Style};
 use serde_json::{Map, Value, json};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+/// Column separator string used between adjacent visible columns.
 const COL_SEP: &str = "  ";
+/// Width of the column separator in characters.
 const COL_SEP_WIDTH: usize = 2;
+/// Width of the leading gutter (marker char + space).
 const GUTTER_WIDTH: usize = 2;
+/// Priority penalty added to columns where every row is empty.
 const EMPTY_PENALTY: u8 = 10;
 
+/// Header labels for the 11 list table columns.
 const HEADERS: &[&str] = &[
   "Branch", "Status", "HEAD±", "main↕", "CI", "Path", "URL", "Commit", "Age", "Message", "Summary",
 ];
 
+/// Text alignment within a column.
 #[derive(Clone, Copy, PartialEq)]
 enum Align {
+  /// Left-align cell content.
   Left,
+  /// Right-align cell content.
   Right,
 }
 
+/// Layout specification for a single column in the list table.
 struct ColSpec {
+  /// Allocation priority (lower = added to layout first).
   priority: u8,
+  /// Whether the column can shrink below its ideal width.
   shrinkable: bool,
+  /// Minimum width before the column is hidden entirely.
   min_width: Option<usize>,
+  /// Maximum width cap applied during allocation.
   max_width: Option<usize>,
+  /// Text alignment within the column.
   align: Align,
+  /// Whether content may be truncated with an ellipsis.
   truncatable: bool,
 }
 
+/// Layout specifications for each of the 11 list table columns.
 const COL_SPECS: [ColSpec; 11] = [
   // Branch
   ColSpec {
@@ -131,22 +147,31 @@ const COL_SPECS: [ColSpec; 11] = [
   },
 ];
 
+/// Dimmed ANSI style for metadata columns.
 const DIM: Style = Style::new().dimmed();
+/// Bold ANSI style for emphasis (headers, current workspace).
 const BOLD: Style = Style::new().bold();
+/// Green ANSI style for positive indicators (added lines, ahead).
 const GREEN: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
+/// Red ANSI style for negative indicators (removed lines, failures).
 const RED: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)));
+/// Yellow ANSI style for warning indicators (modified, behind).
 const YELLOW: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
+/// Cyan ANSI style for informational indicators (untracked, ancestor).
 const CYAN: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
 
 /// One rendered cell: `plain` is used for width measurement and padding,
 /// `display` is what is written out (may include ANSI escapes).
 #[derive(Default, Clone)]
 struct Cell {
+  /// Text without ANSI escapes, used for width measurement.
   plain: String,
+  /// Text as written to output (may include ANSI escapes).
   display: String,
 }
 
 impl Cell {
+  /// Create a cell with no ANSI styling (plain == display).
   fn raw(s: String) -> Self {
     Self {
       plain: s.clone(),
@@ -154,10 +179,12 @@ impl Cell {
     }
   }
 
+  /// Create a cell with separate plain (for measurement) and display (with ANSI) strings.
   fn styled(plain: String, display: String) -> Self {
     Self { plain, display }
   }
 
+  /// Visible width of the cell in terminal columns.
   fn width(&self) -> usize {
     self.plain.as_str().width()
   }
@@ -208,7 +235,7 @@ fn truncate_cell(cell: &Cell, max_width: usize) -> Cell {
       new_display.push(c);
       new_display.push(chars.next().unwrap()); // '['
 
-      while let Some(esc_c) = chars.next() {
+      for esc_c in chars.by_ref() {
         new_display.push(esc_c);
 
         if esc_c.is_ascii_alphabetic() {
@@ -285,6 +312,7 @@ pub fn format_list_table(rows: &[ListRow], styled: bool, term_width: Option<u16>
   out
 }
 
+/// Append visible columns to `out`, separated and padded according to widths.
 fn push_columns(out: &mut String, cells: &[Cell; 11], widths: &[usize; 11], visible: &[bool; 11]) {
   let mut first = true;
 
@@ -323,10 +351,12 @@ fn push_columns(out: &mut String, cells: &[Cell; 11], widths: &[usize; 11], visi
   }
 }
 
+/// Build the cell grid for all data rows.
 fn build_cells(rows: &[ListRow], styled: bool) -> Vec<[Cell; 11]> {
   rows.iter().map(|r| build_row_cells(r, styled)).collect()
 }
 
+/// Build the 11 cells for a single list row.
 fn build_row_cells(r: &ListRow, styled: bool) -> [Cell; 11] {
   // Worktrunk dims rows that "should dim" (typically non-current). We
   // dim non-current rows' branch/path; commit/age/url/message are always
@@ -353,6 +383,7 @@ fn build_row_cells(r: &ListRow, styled: bool) -> [Cell; 11] {
   ]
 }
 
+/// Create a cell from a plain string, optionally wrapping it in an ANSI style.
 fn text_cell(s: &str, style: Option<Style>) -> Cell {
   match style {
     Some(st) if !s.is_empty() => Cell::styled(s.to_string(), wrap(s, st)),
@@ -437,14 +468,12 @@ fn compute_widths(cells: &[[Cell; 11]], term_width: Option<u16>) -> ([usize; 11]
         visible[col] = true;
         remaining = 0;
       }
-    } else if spec.min_width.is_some() {
-      let min = spec.min_width.unwrap();
-
-      if min + sep <= remaining {
-        widths[col] = min;
-        visible[col] = true;
-        remaining -= min + sep;
-      }
+    } else if let Some(min) = spec.min_width
+      && min + sep <= remaining
+    {
+      widths[col] = min;
+      visible[col] = true;
+      remaining -= min + sep;
     }
     // Otherwise column is hidden (width stays 0, visible stays false).
   }
@@ -463,6 +492,7 @@ fn compute_widths(cells: &[[Cell; 11]], term_width: Option<u16>) -> ([usize; 11]
   (widths, visible)
 }
 
+/// Return the gutter marker character for a row (`@`, `^`, `+`, or `/`).
 fn gutter_char(row: &ListRow) -> char {
   if matches!(row.kind, ListRowKind::Branch) {
     '/'
@@ -475,6 +505,7 @@ fn gutter_char(row: &ListRow) -> char {
   }
 }
 
+/// Format the workspace path column relative to the repo root.
 fn format_path(row: &ListRow) -> String {
   match row.kind {
     ListRowKind::Branch => String::new(),
@@ -491,6 +522,7 @@ pub fn render_status_glyphs(f: &StatusFlags) -> String {
   cell.plain
 }
 
+/// Build the 7-position status glyph cell for a workspace.
 fn status_cell(f: &StatusFlags, styled: bool) -> Cell {
   // Build position-by-position. Each position is one visible char (space
   // when blank). We carry styled and plain forms in lock-step.
@@ -568,6 +600,7 @@ fn status_cell(f: &StatusFlags, styled: bool) -> Cell {
   Cell::styled(plain, display)
 }
 
+/// Build the HEAD diff cell showing lines added/removed.
 fn head_diff_cell(d: &LineDiff, styled: bool) -> Cell {
   let plain = format_head_diff(d);
 
@@ -608,6 +641,7 @@ fn head_diff_cell(d: &LineDiff, styled: bool) -> Cell {
   Cell::styled(plain, display)
 }
 
+/// Build the ahead/behind trunk cell with arrow notation.
 fn ahead_behind_cell(ab: &AheadBehind, styled: bool) -> Cell {
   let plain = format_ahead_behind(ab);
 
@@ -648,6 +682,7 @@ fn ahead_behind_cell(ab: &AheadBehind, styled: bool) -> Cell {
   Cell::styled(plain, display)
 }
 
+/// Build the CI status cell with a check mark, cross, or pending indicator.
 fn ci_status_cell(ci: CiStatus, styled: bool) -> Cell {
   match ci {
     CiStatus::None => Cell::raw(String::new()),
@@ -707,6 +742,7 @@ fn compact_arrows(value: u32) -> (String, bool) {
   }
 }
 
+/// Format a line diff as a plain string (e.g. `+42 -7`).
 fn format_head_diff(d: &LineDiff) -> String {
   let (add_str, _) = compact_signs(d.added);
   let (rem_str, _) = compact_signs(d.removed);
@@ -719,6 +755,7 @@ fn format_head_diff(d: &LineDiff) -> String {
   }
 }
 
+/// Format ahead/behind counts as a plain string (e.g. `↑3 ↓2`).
 fn format_ahead_behind(ab: &AheadBehind) -> String {
   let (ahead_str, _) = compact_arrows(ab.ahead);
   let (behind_str, _) = compact_arrows(ab.behind);
@@ -769,6 +806,7 @@ pub fn format_age(seconds_ago: i64) -> String {
   "now".to_string()
 }
 
+/// Build the footer summary line (e.g. "Showing 5 worktrees, 2 with changes").
 fn format_summary(rows: &[ListRow], styled: bool) -> String {
   let n = rows.len();
   let dirty = rows
@@ -806,6 +844,7 @@ pub fn format_list_json(rows: &[ListRow]) -> String {
   serde_json::to_string_pretty(&Value::Array(arr)).expect("json serialize")
 }
 
+/// Convert a single list row into a JSON object.
 fn list_row_json(r: &ListRow) -> Value {
   let mut m = Map::new();
 
@@ -867,6 +906,7 @@ fn list_row_json(r: &ListRow) -> Value {
   Value::Object(m)
 }
 
+/// Convert a trunk relationship to its JSON string representation.
 fn trunk_rel_str(rel: Option<TrunkRel>) -> Value {
   match rel {
     Some(TrunkRel::IsTrunk) => json!("is_trunk"),
@@ -926,5 +966,143 @@ pub fn format_statusline(rows: &[ListRow], current: Option<&str>) -> String {
     None => {
       format!("@? | {total} ws")
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn compact_signs_small_values() {
+    assert_eq!(compact_signs(0), ("0".into(), false));
+    assert_eq!(compact_signs(99), ("99".into(), false));
+    assert_eq!(compact_signs(999), ("999".into(), false));
+  }
+
+  #[test]
+  fn compact_signs_thousands() {
+    assert_eq!(compact_signs(1_000), ("1K".into(), true));
+    assert_eq!(compact_signs(4_500), ("4K".into(), true));
+    assert_eq!(compact_signs(9_999), ("9K".into(), true));
+  }
+
+  #[test]
+  fn compact_signs_overflow() {
+    assert_eq!(compact_signs(10_000), ("∞".into(), true));
+    assert_eq!(compact_signs(100_000), ("∞".into(), true));
+  }
+
+  #[test]
+  fn compact_arrows_small_values() {
+    assert_eq!(compact_arrows(0), ("0".into(), false));
+    assert_eq!(compact_arrows(99), ("99".into(), false));
+  }
+
+  #[test]
+  fn compact_arrows_hundreds() {
+    assert_eq!(compact_arrows(100), ("1C".into(), true));
+    assert_eq!(compact_arrows(999), ("9C".into(), true));
+  }
+
+  #[test]
+  fn compact_arrows_thousands() {
+    assert_eq!(compact_arrows(1_000), ("1K".into(), true));
+    assert_eq!(compact_arrows(9_999), ("9K".into(), true));
+  }
+
+  #[test]
+  fn compact_arrows_overflow() {
+    assert_eq!(compact_arrows(10_000), ("∞".into(), true));
+  }
+
+  #[test]
+  fn format_head_diff_empty() {
+    let d = LineDiff {
+      added: 0,
+      removed: 0,
+    };
+
+    assert_eq!(format_head_diff(&d), "");
+  }
+
+  #[test]
+  fn format_head_diff_add_only() {
+    let d = LineDiff {
+      added: 42,
+      removed: 0,
+    };
+
+    assert_eq!(format_head_diff(&d), "+42");
+  }
+
+  #[test]
+  fn format_head_diff_remove_only() {
+    let d = LineDiff {
+      added: 0,
+      removed: 7,
+    };
+
+    assert_eq!(format_head_diff(&d), "-7");
+  }
+
+  #[test]
+  fn format_head_diff_both() {
+    let d = LineDiff {
+      added: 100,
+      removed: 50,
+    };
+
+    assert_eq!(format_head_diff(&d), "+100 -50");
+  }
+
+  #[test]
+  fn format_head_diff_compact() {
+    let d = LineDiff {
+      added: 5_000,
+      removed: 10_000,
+    };
+
+    assert_eq!(format_head_diff(&d), "+5K -∞");
+  }
+
+  #[test]
+  fn format_ahead_behind_even() {
+    let ab = AheadBehind {
+      ahead: 0,
+      behind: 0,
+    };
+
+    assert_eq!(format_ahead_behind(&ab), "");
+  }
+
+  #[test]
+  fn format_ahead_behind_ahead_only() {
+    let ab = AheadBehind {
+      ahead: 3,
+      behind: 0,
+    };
+
+    assert_eq!(format_ahead_behind(&ab), "↑3");
+  }
+
+  #[test]
+  fn format_ahead_behind_behind_only() {
+    let ab = AheadBehind {
+      ahead: 0,
+      behind: 12,
+    };
+
+    assert_eq!(format_ahead_behind(&ab), "↓12");
+  }
+
+  #[test]
+  fn format_ahead_behind_diverged() {
+    let ab = AheadBehind {
+      ahead: 5,
+      behind: 200,
+    };
+
+    assert_eq!(format_ahead_behind(&ab), "↑5 ↓2C");
   }
 }

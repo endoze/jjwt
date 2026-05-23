@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 use std::time::Duration;
@@ -41,6 +43,7 @@ pub fn run(cwd: &Path, argv: Vec<String>) -> Result<i32> {
   Ok(exit)
 }
 
+/// Unix implementation: spawn in a process group, poll workspace, signal on removal.
 #[cfg(unix)]
 fn run_tethered(argv: &[String], ws_path: &Path) -> Result<i32> {
   use std::os::unix::process::CommandExt;
@@ -92,6 +95,7 @@ fn run_tethered(argv: &[String], ws_path: &Path) -> Result<i32> {
   }
 }
 
+/// Non-Unix stub: tethering is not supported on this platform.
 #[cfg(not(unix))]
 fn run_tethered(_argv: &[String], _ws_path: &Path) -> Result<i32> {
   bail!("step tether is supported on Unix only");

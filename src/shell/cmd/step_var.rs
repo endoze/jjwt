@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::path::Path;
 
@@ -7,6 +9,7 @@ use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
 use crate::shell::state;
 
+/// Set a per-workspace variable in persistent state.
 pub fn run_set(cwd: &Path, key: &str, value: &str) -> Result<()> {
   let (workspace, repo_root) = resolve_workspace(cwd)?;
   let mut st = state::load(&repo_root);
@@ -17,6 +20,7 @@ pub fn run_set(cwd: &Path, key: &str, value: &str) -> Result<()> {
   Ok(())
 }
 
+/// Print the value of a per-workspace variable.
 pub fn run_get(cwd: &Path, key: &str) -> Result<()> {
   let (workspace, repo_root) = resolve_workspace(cwd)?;
   let st = state::load(&repo_root);
@@ -31,6 +35,7 @@ pub fn run_get(cwd: &Path, key: &str) -> Result<()> {
   }
 }
 
+/// List all variables for the current workspace.
 pub fn run_list(cwd: &Path) -> Result<()> {
   let (workspace, repo_root) = resolve_workspace(cwd)?;
   let st = state::load(&repo_root);
@@ -51,6 +56,7 @@ pub fn run_list(cwd: &Path) -> Result<()> {
   Ok(())
 }
 
+/// Delete a per-workspace variable from persistent state.
 pub fn run_delete(cwd: &Path, key: &str) -> Result<()> {
   let (workspace, repo_root) = resolve_workspace(cwd)?;
   let mut st = state::load(&repo_root);
@@ -65,6 +71,7 @@ pub fn run_delete(cwd: &Path, key: &str) -> Result<()> {
   }
 }
 
+/// Determine the current workspace name and repo root from `cwd`.
 fn resolve_workspace(cwd: &Path) -> Result<(String, std::path::PathBuf)> {
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;

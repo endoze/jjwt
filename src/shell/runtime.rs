@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Result, anyhow};
 
 use crate::core::types::{Action, HookSource, Plan};
@@ -5,10 +7,15 @@ use crate::shell::fs::Fs;
 use crate::shell::jj::Jj;
 use crate::shell::proc::Proc;
 
+/// Holds the backend implementations used during plan execution.
 pub struct Runtime<J: Jj, F: Fs, P: Proc> {
+  /// Jj backend for repository operations.
   pub jj: J,
+  /// Filesystem backend for file operations.
   pub fs: F,
+  /// Process backend for shell command execution.
   pub proc: P,
+  /// Root path of the jj repository.
   pub repo_root: std::path::PathBuf,
   /// Repo identity for approval lookups (e.g. `github.com/owner/repo`).
   pub repo_id: Option<String>,
@@ -18,6 +25,7 @@ pub struct Runtime<J: Jj, F: Fs, P: Proc> {
 }
 
 impl<J: Jj, F: Fs, P: Proc> Runtime<J, F, P> {
+  /// Create a new runtime with default repo root and auto-detected interactivity.
   pub fn new(jj: J, fs: F, proc: P) -> Self {
     Self {
       jj,
@@ -29,12 +37,14 @@ impl<J: Jj, F: Fs, P: Proc> Runtime<J, F, P> {
     }
   }
 
+  /// Set the repo root path, returning the modified runtime.
   pub fn with_root(mut self, root: std::path::PathBuf) -> Self {
     self.repo_root = root;
 
     self
   }
 
+  /// Set the repo identity for approval lookups, returning the modified runtime.
   pub fn with_repo_id(mut self, id: Option<String>) -> Self {
     self.repo_id = id;
 

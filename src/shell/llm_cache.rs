@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -6,22 +8,29 @@ use std::path::{Path, PathBuf};
 /// How long cached summaries remain valid (7 days in seconds).
 const TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 
+/// On-disk cache mapping commit IDs to LLM-generated summaries.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct LlmCache {
+  /// Cached summaries keyed by commit short ID.
   #[serde(default)]
   pub summaries: HashMap<String, CachedSummary>,
 }
 
+/// A single cached summary with its creation timestamp.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CachedSummary {
+  /// The cached summary text.
   pub text: String,
+  /// Unix timestamp when this entry was created.
   pub created: i64,
 }
 
+/// Compute the on-disk path for the LLM cache file within the repo.
 fn cache_path(repo_root: &Path) -> PathBuf {
   repo_root.join(".jj").join("jjwt-llm-cache.toml")
 }
 
+/// Return the current time as a Unix timestamp in seconds.
 fn now_unix() -> i64 {
   std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)

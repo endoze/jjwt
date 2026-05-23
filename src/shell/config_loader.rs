@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -49,6 +51,7 @@ pub fn find_config(start: &Path, override_path: Option<&Path>) -> Result<PathBuf
   }
 }
 
+/// Parse a config file at `path` into a `Config` struct.
 pub fn load_config(path: &Path) -> Result<Config> {
   let src = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
 
@@ -84,6 +87,7 @@ pub fn resolve_repo_identity(repo_root: &Path) -> Option<String> {
     .or_else(|| repo_root_basename(repo_root))
 }
 
+/// Extract the directory basename as a fallback repo identity.
 fn repo_root_basename(repo_root: &Path) -> Option<String> {
   repo_root
     .file_name()

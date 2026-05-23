@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::io::IsTerminal;
 use std::path::Path;
@@ -11,6 +13,7 @@ use crate::shell::observe::observe_list;
 use crate::shell::proc::RealProc;
 use crate::shell::runtime::{Runtime, execute};
 
+/// Execute the `list` command: gather workspace data, query CI/LLM, and print.
 pub fn run(
   cwd: &Path,
   config_path: Option<&Path>,

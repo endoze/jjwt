@@ -1,19 +1,29 @@
+//! Entry point for the `jjwt` CLI binary.
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 use std::path::PathBuf;
 
 use jjwt::core::types::OutputFormat as CoreOutputFormat;
 use jjwt::shell::cmd;
 
+/// CLI-level output format selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 enum OutputFormat {
+  /// Human-readable plain text.
   #[default]
   Text,
+  /// Machine-readable JSON.
   Json,
+  /// Compact status-line format for shell prompts.
   Statusline,
 }
 
+/// Converts the CLI output format into the core library's format type.
 impl From<OutputFormat> for CoreOutputFormat {
+  /// Maps each CLI variant to its core equivalent.
   fn from(o: OutputFormat) -> Self {
     match o {
       OutputFormat::Text => CoreOutputFormat::Text,
@@ -23,6 +33,7 @@ impl From<OutputFormat> for CoreOutputFormat {
   }
 }
 
+/// Top-level CLI argument parser.
 #[derive(Parser)]
 #[command(name = "jjwt", version, about)]
 struct Cli {
@@ -35,17 +46,25 @@ struct Cli {
   /// Verbosity (-v, -vv).
   #[arg(short, long, global = true, action = clap::ArgAction::Count)]
   verbose: u8,
+  /// Subcommand to execute.
   #[command(subcommand)]
   cmd: Cmd,
 }
 
+/// Available top-level subcommands.
 #[derive(Subcommand)]
 enum Cmd {
+  /// Switch to a different workspace.
   Switch(SwitchCmd),
+  /// Remove one or more workspaces.
   Remove(RemoveCmd),
+  /// List workspaces and bookmarks.
   List(ListCmd),
+  /// Run or inspect hooks.
   Hook(HookCmd),
+  /// Manage jjwt configuration.
   Config(ConfigCmd),
+  /// Low-level workspace utilities.
   Step(StepCmd),
   /// Catch-all for user-defined aliases. First element is the alias name;
   /// the rest are forwarded to the alias's template as `{{ args }}`.
@@ -53,12 +72,15 @@ enum Cmd {
   External(Vec<String>),
 }
 
+/// Container for the `step` subcommand group.
 #[derive(Args)]
 struct StepCmd {
+  /// Step sub-subcommand to run.
   #[command(subcommand)]
   sub: StepSub,
 }
 
+/// Available step sub-subcommands.
 #[derive(Subcommand)]
 enum StepSub {
   /// Render a template expression and print the result.
@@ -128,6 +150,7 @@ enum StepSub {
   },
 }
 
+/// Subcommands for per-workspace variable management.
 #[derive(Subcommand)]
 enum VarSub {
   /// Set a variable for the current workspace.
@@ -151,11 +174,15 @@ enum VarSub {
   },
 }
 
+/// Arguments for the `switch` command.
 #[derive(Args)]
 struct SwitchCmd {
+  /// Target workspace name.
   name: String,
+  /// Create the workspace if it does not exist.
   #[arg(short, long)]
   create: bool,
+  /// Re-run post-switch hooks even if already in the workspace.
   #[arg(long)]
   rerun_hooks: bool,
   /// Run a command after switching. Template-rendered; the shell wrapper
@@ -176,6 +203,7 @@ struct SwitchCmd {
   format: OutputFormat,
 }
 
+/// Arguments for the `remove` command.
 #[derive(Args)]
 struct RemoveCmd {
   /// Workspaces to remove. When omitted, defaults to the current workspace.
@@ -201,6 +229,7 @@ struct RemoveCmd {
   format: OutputFormat,
 }
 
+/// Arguments for the `list` command.
 #[derive(Args)]
 struct ListCmd {
   /// Include local bookmarks that don't have a workspace.
@@ -218,12 +247,16 @@ struct ListCmd {
   format: OutputFormat,
 }
 
+/// Filter for which config source a hook originates from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum HookSourceArg {
+  /// User-level configuration.
   User,
+  /// Project-level configuration.
   Project,
 }
 
+/// Arguments for the `hook` command.
 #[derive(Args)]
 struct HookCmd {
   /// Hook name to run. Omit to use --show.
@@ -245,19 +278,35 @@ struct HookCmd {
   format: OutputFormat,
 }
 
+/// Arguments for the `config` command.
 #[derive(Args)]
 struct ConfigCmd {
+  /// Config sub-subcommand to run.
   #[command(subcommand)]
   sub: ConfigSub,
 }
 
+/// Available config sub-subcommands.
 #[derive(Subcommand)]
 enum ConfigSub {
+  /// Shell integration helpers.
   Shell(ConfigShellCmd),
+  /// Scaffold a new configuration file.
   Create(ConfigCreateCmd),
+  /// Display the resolved configuration.
   Show,
+  /// Generate shell completion scripts.
+  Completions(ConfigCompletionsCmd),
 }
 
+/// Arguments for the `config completions` command.
+#[derive(Args)]
+struct ConfigCompletionsCmd {
+  /// Shell to generate completions for.
+  shell: Shell,
+}
+
+/// Arguments for the `config create` command.
 #[derive(Args)]
 struct ConfigCreateCmd {
   /// Write a project config at `.config/wt.toml`.
@@ -268,22 +317,29 @@ struct ConfigCreateCmd {
   user: bool,
 }
 
+/// Arguments for the `config shell` command.
 #[derive(Args)]
 struct ConfigShellCmd {
+  /// Shell sub-subcommand to run.
   #[command(subcommand)]
   sub: ConfigShellSub,
 }
 
+/// Available shell integration sub-subcommands.
 #[derive(Subcommand)]
 enum ConfigShellSub {
+  /// Emit shell initialization code.
   Init(ConfigShellInitCmd),
 }
 
+/// Arguments for the `config shell init` command.
 #[derive(Args)]
 struct ConfigShellInitCmd {
+  /// Shell name (e.g. `bash`, `zsh`, `fish`).
   shell: String,
 }
 
+/// Parses CLI arguments and dispatches to the appropriate command handler.
 fn main() -> Result<()> {
   let cli = Cli::parse();
 
@@ -351,6 +407,11 @@ fn main() -> Result<()> {
       },
       ConfigSub::Create(c) => cmd::config_create::run(cwd, c.project, c.user),
       ConfigSub::Show => cmd::config_show::run(cwd, config),
+      ConfigSub::Completions(c) => {
+        clap_complete::generate(c.shell, &mut Cli::command(), "jjwt", &mut std::io::stdout());
+
+        Ok(())
+      }
     },
     Cmd::Step(s) => match s.sub {
       StepSub::Eval { template } => cmd::step_eval::run(cwd, &template),

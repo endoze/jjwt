@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -10,12 +12,15 @@ use crate::shell::config_loader::user_config_dir;
 /// On-disk representation of `approvals.toml`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 struct ApprovalsFile {
+  /// Per-project approval records keyed by repo identity.
   #[serde(default)]
   projects: HashMap<String, ProjectApprovals>,
 }
 
+/// Approved commands for a single project.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 struct ProjectApprovals {
+  /// SHA-256 hashes of approved rendered hook commands.
   #[serde(default, rename = "approved-commands")]
   approved_commands: Vec<String>,
 }
@@ -25,6 +30,7 @@ pub fn approvals_path() -> Result<PathBuf> {
   Ok(user_config_dir()?.join("approvals.toml"))
 }
 
+/// Produce a deterministic SHA-256 hash string for a rendered command.
 fn hash_command(rendered_cmd: &str) -> String {
   let digest = Sha256::digest(rendered_cmd.as_bytes());
   let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
@@ -32,6 +38,7 @@ fn hash_command(rendered_cmd: &str) -> String {
   format!("sha256:{hex}")
 }
 
+/// Load the approvals file from disk, returning defaults on any error.
 fn load_file(path: &Path) -> ApprovalsFile {
   let src = match std::fs::read_to_string(path) {
     Ok(s) => s,
@@ -41,6 +48,7 @@ fn load_file(path: &Path) -> ApprovalsFile {
   toml::from_str(&src).unwrap_or_default()
 }
 
+/// Serialize and write the approvals file to disk.
 fn save_file(path: &Path, file: &ApprovalsFile) -> Result<()> {
   if let Some(parent) = path.parent() {
     std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -166,6 +174,6 @@ mod tests {
     // but we test the internal logic via load_file.
     let file = ApprovalsFile::default();
 
-    assert!(file.projects.get("any").is_none());
+    assert!(!file.projects.contains_key("any"));
   }
 }

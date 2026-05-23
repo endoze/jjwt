@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 // Ported from https://github.com/max-sixty/worktrunk (short_hash).
 
 use std::hash::{Hash, Hasher};

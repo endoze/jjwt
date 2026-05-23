@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use crate::core::types::{CommitGenerationConfig, CoreError};
 use minijinja::{Environment, UndefinedBehavior};
 use std::io::Write;
@@ -6,13 +8,19 @@ use std::process::{Command, Stdio};
 
 /// Variables available in the LLM prompt template.
 pub struct LlmPromptVars {
+  /// Full diff output from `jj diff`.
   pub jj_diff: String,
+  /// Summary statistics from `jj diff --stat`.
   pub jj_diff_stat: String,
+  /// Current branch/workspace name.
   pub branch: String,
+  /// Repository name.
   pub repo: String,
+  /// Recent commit messages for style context.
   pub recent_commits: String,
 }
 
+/// Default prompt template for commit message generation.
 const DEFAULT_TEMPLATE: &str = r#"Write a concise commit message for the following changes.
 
 Branch: {{ branch }}

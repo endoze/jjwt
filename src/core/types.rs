@@ -4,76 +4,98 @@ use std::fmt;
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Errors produced by core planning and configuration logic.
 #[derive(Debug, Error)]
 pub enum CoreError {
+  /// TOML configuration could not be parsed.
   #[error("config parse error: {0}")]
   ConfigParse(String),
+  /// Minijinja template rendering failed.
   #[error("template render error: {0}")]
   TemplateRender(String),
+  /// Named hook does not exist in any configured hook group.
   #[error("hook '{0}' not found in config")]
   HookNotFound(String),
+  /// Named hook appears in more than one hook group.
   #[error("hook '{0}' is ambiguous: appears in multiple groups")]
   HookAmbiguous(String),
+  /// A workspace with this name is already registered.
   #[error("workspace '{0}' already exists")]
   WorkspaceExists(String),
+  /// Target path exists on disk; pass `--clobber` to remove it.
   #[error(
     "path '{0}' already exists at the target workspace location (use --clobber to remove it)"
   )]
   TargetPathOccupied(String),
+  /// Target path is nested inside another workspace's directory.
   #[error("path '{0}' is inside another workspace and cannot be clobbered")]
   TargetPathInsideOtherWorkspace(String),
+  /// No workspace with this name is registered.
   #[error("workspace '{0}' does not exist")]
   WorkspaceMissing(String),
+  /// Workspace has uncommitted changes and `--force` was not given.
   #[error("workspace '{0}' has uncommitted changes (use --force)")]
   WorkspaceDirty(String),
+  /// Bookmark is not merged into trunk and forced deletion was not requested.
   #[error("bookmark '{0}' is not fully merged into trunk (use --force)")]
   BookmarkUnmerged(String),
+  /// Current directory is not inside a jj repository.
   #[error("not inside a jj repo")]
   NotJjRepo,
+  /// No alias with this name exists in the configuration.
   #[error("alias '{0}' not found in config")]
   AliasNotFound(String),
 }
 
+/// Top-level configuration parsed from a single `wt.toml` file.
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct Config {
+  /// Settings for the `list` subcommand (URL template, summary toggle).
   #[serde(default)]
   pub list: Option<ListConfig>,
+  /// Hooks to run before switching to a workspace.
   #[serde(
     rename = "pre-switch",
     default,
     deserialize_with = "crate::core::config::deserialize_hook_groups"
   )]
   pub pre_switch: Vec<HookGroup>,
+  /// Hooks to run after switching to a workspace.
   #[serde(
     rename = "post-switch",
     default,
     deserialize_with = "crate::core::config::deserialize_hook_groups"
   )]
   pub post_switch: Vec<HookGroup>,
+  /// Hooks to run before a workspace is created.
   #[serde(
     rename = "pre-start",
     default,
     deserialize_with = "crate::core::config::deserialize_hook_groups"
   )]
   pub pre_start: Vec<HookGroup>,
+  /// Hooks to run after a workspace is created.
   #[serde(
     rename = "post-start",
     default,
     deserialize_with = "crate::core::config::deserialize_hook_groups"
   )]
   pub post_start: Vec<HookGroup>,
+  /// Hooks to run before a workspace is removed.
   #[serde(
     rename = "pre-remove",
     default,
     deserialize_with = "crate::core::config::deserialize_hook_groups"
   )]
   pub pre_remove: Vec<HookGroup>,
+  /// Hooks to run after a workspace is removed.
   #[serde(
     rename = "post-remove",
     default,
     deserialize_with = "crate::core::config::deserialize_hook_groups"
   )]
   pub post_remove: Vec<HookGroup>,
+  /// When true, workspace directory deletion runs in the background.
   #[serde(rename = "background-remove", default)]
   pub background_remove: Option<bool>,
   /// Custom subcommands. Each entry maps `jjwt <name>` to a template
@@ -81,6 +103,7 @@ pub struct Config {
   /// via `sh -c` with stdio inherited from the parent process.
   #[serde(default)]
   pub aliases: IndexMap<String, String>,
+  /// Minijinja template for computing workspace directory paths.
   #[serde(rename = "worktree-path", default)]
   pub worktree_path_template: Option<String>,
   /// LLM commit-message generation settings.
@@ -109,12 +132,16 @@ impl Config {
   }
 }
 
+/// Which configuration layer a hook originated from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookSource {
+  /// Hook defined in the user-level config.
   User,
+  /// Hook defined in the project-level config.
   Project,
 }
 
+/// Renders the hook source as `"user"` or `"project"`.
 impl fmt::Display for HookSource {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
@@ -124,24 +151,39 @@ impl fmt::Display for HookSource {
   }
 }
 
+/// A hook group paired with which config layer it came from.
 #[derive(Debug, Clone)]
 pub struct SourcedHookGroup {
+  /// Whether this group came from user or project config.
   pub source: HookSource,
+  /// Ordered map of hook name to command template.
   pub group: HookGroup,
 }
 
+/// User and project configs merged into a single effective configuration.
 #[derive(Debug, Clone, Default)]
 pub struct MergedConfig {
+  /// List subcommand settings (URL template, summary toggle).
   pub list: Option<ListConfig>,
+  /// Hooks fired before switching workspaces.
   pub pre_switch: Vec<SourcedHookGroup>,
+  /// Hooks fired after switching workspaces.
   pub post_switch: Vec<SourcedHookGroup>,
+  /// Hooks fired before creating a workspace.
   pub pre_start: Vec<SourcedHookGroup>,
+  /// Hooks fired after creating a workspace.
   pub post_start: Vec<SourcedHookGroup>,
+  /// Hooks fired before removing a workspace.
   pub pre_remove: Vec<SourcedHookGroup>,
+  /// Hooks fired after removing a workspace.
   pub post_remove: Vec<SourcedHookGroup>,
+  /// Whether directory deletion should run in the background.
   pub background_remove: Option<bool>,
+  /// Custom subcommand aliases (name to template).
   pub aliases: IndexMap<String, String>,
+  /// Minijinja template for workspace directory paths.
   pub worktree_path_template: Option<String>,
+  /// LLM commit-message generation settings.
   pub commit: Option<CommitConfig>,
 }
 
@@ -268,19 +310,24 @@ impl MergedConfig {
   }
 }
 
+/// Configuration for the `list` subcommand.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ListConfig {
+  /// Minijinja template rendered into a URL column for each workspace.
   pub url: String,
   /// Enable LLM-generated one-liner summaries in `list --full`.
   #[serde(default)]
   pub summary: Option<bool>,
 }
 
+/// Settings for LLM-assisted commit message generation.
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct CommitConfig {
+  /// Configuration for the generation subprocess and prompt template.
   pub generation: Option<CommitGenerationConfig>,
 }
 
+/// Controls how commit messages are generated via an external LLM command.
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct CommitGenerationConfig {
   /// Shell command that reads a prompt from stdin and writes a commit
@@ -295,8 +342,10 @@ pub struct CommitGenerationConfig {
   pub template_append: Option<String>,
 }
 
+/// Ordered map of hook name to command template within a single group.
 pub type HookGroup = IndexMap<String, String>;
 
+/// Variables available to minijinja templates during hook/alias rendering.
 #[derive(Debug, Clone, Default)]
 pub struct RenderContext {
   /// Branch/workspace name the operation targets.
@@ -326,17 +375,25 @@ pub struct RenderContext {
   pub vars_state: HashMap<String, String>,
 }
 
+/// A registered jj workspace with its on-disk location and freshness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
+  /// Workspace name as registered with jj.
   pub name: String,
+  /// Absolute path to the workspace directory.
   pub path: PathBuf,
+  /// Whether jj considers this workspace stale (needs update).
   pub stale: bool,
 }
 
+/// Snapshot of the repository and workspace state observed by the shell.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ObservedState {
+  /// Absolute path to the repository root.
   pub repo_root: PathBuf,
+  /// Whether the current directory is inside a jj repository.
   pub is_jj_repo: bool,
+  /// All registered workspaces with their paths and staleness.
   pub workspaces: Vec<Workspace>,
   /// Workspace whose path contains cwd (deepest match), if any.
   pub current_workspace: Option<String>,
@@ -355,70 +412,111 @@ pub struct ObservedState {
   pub target_resolved_workspace: Option<String>,
 }
 
+/// A single step in an execution plan produced by the planner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
+  /// Register a new jj workspace at the given path.
   JjWorkspaceAdd {
+    /// Workspace name to register.
     name: String,
+    /// On-disk path for the new workspace.
     path: PathBuf,
   },
+  /// Create a jj bookmark pointing at the workspace's working copy.
   JjBookmarkCreate {
+    /// Bookmark name to create.
     name: String,
+    /// Workspace whose `@` the bookmark targets.
     workspace: String,
   },
+  /// Unregister a jj workspace (does not delete files).
   JjWorkspaceForget {
+    /// Workspace name to forget.
     name: String,
   },
+  /// Delete a jj bookmark.
   JjBookmarkDelete {
+    /// Bookmark name to delete.
     name: String,
   },
+  /// Bring a stale workspace up to date.
   JjWorkspaceUpdateStale {
+    /// Workspace name to update.
     name: String,
   },
+  /// Synchronously delete a directory tree.
   DeleteDir {
+    /// Path to remove.
     path: PathBuf,
   },
+  /// Delete a directory tree in a background process.
   DeleteDirBackground {
+    /// Path to remove asynchronously.
     path: PathBuf,
   },
+  /// Rename a jj workspace.
   JjWorkspaceRename {
+    /// Current workspace name.
     old_name: String,
+    /// New workspace name.
     new_name: String,
   },
+  /// Move a directory from one path to another.
   RenameDir {
+    /// Current path.
     from: PathBuf,
+    /// Destination path.
     to: PathBuf,
   },
+  /// Rename a jj bookmark.
   JjBookmarkRename {
+    /// Current bookmark name.
     old_name: String,
+    /// New bookmark name.
     new_name: String,
   },
+  /// Execute a rendered hook command in a subprocess.
   RunHook {
+    /// Named key of the hook inside its group.
     name: String,
+    /// Fully rendered shell command string.
     rendered_cmd: String,
+    /// Working directory for the hook subprocess.
     cwd: PathBuf,
+    /// Environment variables injected into the hook process.
     env: Vec<(String, String)>,
+    /// Which config layer defined this hook.
     source: HookSource,
   },
   /// Run a command with stdio inherited from the parent process. Used by
   /// `jjwt <alias>` and (in 1B.17) `jjwt switch -x`. A non-zero exit
   /// becomes an error so the surrounding plan halts.
   Exec {
+    /// Fully rendered shell command string.
     rendered_cmd: String,
+    /// Working directory for the exec subprocess.
     cwd: PathBuf,
+    /// Environment variables injected into the subprocess.
     env: Vec<(String, String)>,
   },
+  /// Print a line to stdout (consumed by the shell wrapper).
   PrintLine(String),
 }
 
+/// An ordered sequence of actions to be executed by the runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Plan {
+  /// Actions to execute in order.
   pub actions: Vec<Action>,
 }
 
 impl Plan {
+  /// Create an empty plan.
   pub fn new() -> Self {
     Self::default()
   }
+
+  /// Append an action to the end of the plan.
   pub fn push(&mut self, a: Action) {
     self.actions.push(a);
   }
@@ -436,10 +534,14 @@ pub enum OutputFormat {
   Statusline,
 }
 
+/// Arguments for the `switch` subcommand.
 #[derive(Debug, Clone, Default)]
 pub struct SwitchArgs {
+  /// Target workspace name.
   pub name: String,
+  /// When true, create the workspace if it does not exist.
   pub create: bool,
+  /// Re-run start hooks even though the workspace already exists.
   pub rerun_hooks: bool,
   /// Skip all hooks for this invocation. Set by `--no-hooks`
   /// (and the deprecated `--no-verify` alias).
@@ -453,11 +555,14 @@ pub struct SwitchArgs {
   /// creating the workspace. Worktrunk's `--clobber`. Refused when the
   /// stale path lives inside another registered workspace.
   pub clobber: bool,
+  /// Output format (text, JSON, or statusline).
   pub format: OutputFormat,
 }
 
+/// Arguments for the `remove` subcommand.
 #[derive(Debug, Clone, Default)]
 pub struct RemoveArgs {
+  /// Target workspace name.
   pub name: String,
   /// Force worktree removal: bypass the "uncommitted changes" check.
   /// Worktrunk's `-f`.
@@ -470,39 +575,55 @@ pub struct RemoveArgs {
   /// Delete the bookmark even when not merged into trunk. Worktrunk's
   /// `-D` / `--force-delete`.
   pub force_delete: bool,
+  /// Output format (text, JSON, or statusline).
   pub format: OutputFormat,
 }
 
+/// Arguments for the `hook` subcommand (manual hook invocation).
 #[derive(Debug, Clone)]
 pub struct HookArgs {
+  /// Named key of the hook to run.
   pub name: String,
+  /// Workspace to use as context for template rendering.
   pub current_workspace: String,
   /// Extra template variables from `--var KEY=VAL`.
   pub vars: Vec<(String, String)>,
 }
 
+/// Arguments for a custom alias invocation.
 #[derive(Debug, Clone)]
 pub struct AliasArgs {
+  /// Alias name to look up in config.
   pub name: String,
   /// Tokens forwarded from the CLI; bound to `{{ args }}` in the template.
   pub forwarded: Vec<String>,
 }
 
+/// Arguments for the `relocate` subcommand (rename a workspace).
 #[derive(Debug, Clone, Default)]
 pub struct RelocateArgs {
+  /// Current workspace name.
   pub old_name: String,
+  /// Desired new workspace name.
   pub new_name: String,
+  /// Also rename the associated bookmark.
   pub rename_bookmark: bool,
+  /// Output format (text, JSON, or statusline).
   pub format: OutputFormat,
 }
 
+/// Arguments for the `prune` subcommand (bulk-remove merged workspaces).
 #[derive(Debug, Clone, Default)]
 pub struct PruneArgs {
+  /// Only report what would be pruned; do not modify anything.
   pub dry_run: bool,
+  /// Skip all hooks during pruning.
   pub no_hooks: bool,
+  /// Output format (text, JSON, or statusline).
   pub format: OutputFormat,
 }
 
+/// Relationship of a bookmark to the trunk branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrunkRel {
   /// Bookmark's @ equals trunk exactly.
@@ -519,6 +640,7 @@ pub enum TrunkRel {
   None,
 }
 
+/// Per-workspace status indicators for list display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct StatusFlags {
   /// The `@` commit has a non-empty diff vs its parent (jj analog of
@@ -538,15 +660,21 @@ pub struct StatusFlags {
   pub vs_trunk: Option<TrunkRel>,
 }
 
+/// Lines added and removed in a diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LineDiff {
+  /// Number of lines added.
   pub added: u32,
+  /// Number of lines removed.
   pub removed: u32,
 }
 
+/// Commit distance ahead of and behind trunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AheadBehind {
+  /// Commits ahead of trunk.
   pub ahead: u32,
+  /// Commits behind trunk.
   pub behind: u32,
 }
 
@@ -573,8 +701,11 @@ pub struct CommitInfo {
 /// the list table. Pure data — the core never reads from `jj`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorkspaceDetails {
+  /// Tracked files have working-copy modifications.
   pub modified: bool,
+  /// Untracked files present.
   pub untracked: bool,
+  /// Working copy has unresolved conflicts.
   pub conflicts: bool,
   /// Short change ID (8 chars).
   pub commit_short: String,
@@ -582,21 +713,27 @@ pub struct WorkspaceDetails {
   pub age_seconds: i64,
   /// First line of `@`'s description.
   pub message_first_line: String,
-  /// Working-copy line diff (`jj diff -r @ --stat`).
+  /// Lines added in the working-copy diff.
   pub head_added: u32,
+  /// Lines removed in the working-copy diff.
   pub head_removed: u32,
 }
 
 /// CI check status for a workspace's bookmark, queried from gh/glab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CiStatus {
+  /// All checks passed.
   Pass,
+  /// One or more checks failed.
   Fail,
+  /// Checks are still running.
   Pending,
+  /// No CI information available.
   #[default]
   None,
 }
 
+/// Renders the CI status as a lowercase string.
 impl fmt::Display for CiStatus {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
@@ -608,11 +745,16 @@ impl fmt::Display for CiStatus {
   }
 }
 
+/// Raw per-workspace data observed by the shell for list rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedListRow {
+  /// The workspace identity and path.
   pub workspace: Workspace,
+  /// Working-copy status and commit metadata.
   pub details: WorkspaceDetails,
+  /// Commits ahead of trunk.
   pub ahead: u32,
+  /// Commits behind trunk.
   pub behind: u32,
   /// True when the bookmark for this workspace has a remote-tracking
   /// variant (e.g. `<name>@origin`).
@@ -628,9 +770,13 @@ pub struct ObservedListRow {
 /// State for the prune command: all workspaces with their merge status.
 #[derive(Debug, Clone, Default)]
 pub struct ObservedPruneState {
+  /// Absolute path to the repository root.
   pub repo_root: PathBuf,
+  /// Whether the current directory is inside a jj repository.
   pub is_jj_repo: bool,
+  /// Name of the workspace containing cwd, if any.
   pub current_workspace: Option<String>,
+  /// All registered workspaces.
   pub workspaces: Vec<Workspace>,
   /// Per-workspace: (bookmark_exists, bookmark_merged, workspace_dirty).
   pub workspace_status: Vec<(String, bool, bool, bool)>,
@@ -648,12 +794,16 @@ pub struct DisplayHints {
   pub term_width: Option<u16>,
 }
 
+/// Full observed state for the list subcommand.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ObservedListState {
+  /// Absolute path to the repository root.
   pub repo_root: PathBuf,
+  /// Whether the current directory is inside a jj repository.
   pub is_jj_repo: bool,
   /// Name of the workspace whose path contains cwd, if any.
   pub current_workspace: Option<String>,
+  /// Per-workspace observation data.
   pub rows: Vec<ObservedListRow>,
   /// Names of bookmarks without a workspace, only populated when the
   /// caller asked for `--branches`.
@@ -670,8 +820,10 @@ pub struct ObservedListState {
 /// working-copy state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ListRowKind {
+  /// Row represents a registered jj workspace.
   #[default]
   Workspace,
+  /// Row represents a bookmark without a workspace.
   Branch,
 }
 
@@ -687,12 +839,14 @@ pub struct ListOptions {
   pub full: bool,
 }
 
+/// A fully resolved row for the list table, ready for rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListRow {
   /// Workspace name (also bookmark name by jjwt convention).
   pub name: String,
   /// Absolute on-disk path of the workspace (empty for `Branch` rows).
   pub path: PathBuf,
+  /// Whether this row represents a workspace or a standalone branch.
   pub kind: ListRowKind,
   /// Rendered from `[list].url`; "" if no config.
   pub url: String,
@@ -700,9 +854,11 @@ pub struct ListRow {
   pub is_current: bool,
   /// Workspace name is "default" (lives at repo root).
   pub is_default: bool,
+  /// Working-copy and trunk-relationship status indicators.
   pub status: StatusFlags,
   /// Working-copy line diff (`jj diff -r @ --stat`).
   pub head_diff: LineDiff,
+  /// Commits ahead of and behind trunk.
   pub vs_trunk: AheadBehind,
   /// 8-char short change ID for the workspace's `@`.
   pub commit: String,

@@ -10,6 +10,7 @@ use crate::core::filters::{
 use crate::core::types::{CoreError, RenderContext};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, value::Value};
 
+/// Construct a minijinja environment with all custom filters registered.
 fn build_env() -> Environment<'static> {
   let mut env = Environment::new();
 
@@ -40,6 +41,7 @@ fn build_env() -> Environment<'static> {
   env
 }
 
+/// Render a minijinja template string using the given context variables.
 pub fn render(template: &str, ctx: &RenderContext) -> Result<String, CoreError> {
   let env = build_env();
   let tmpl = env

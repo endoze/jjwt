@@ -2,7 +2,7 @@
 name = "jjwt"
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 description = "jujutsu-backed worktrunk-compatible workspace manager"
 repository = "https://github.com/endoze/jjwt"
 
@@ -21,6 +21,7 @@ path = "src/main.rs"
 anstyle = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 futures = "0.3"
 indexmap = { version = "2", features = ["serde"] }
 # In-process jj backend — eliminates subprocess spawning. PINNED EXACT
@@ -48,6 +49,9 @@ which = "8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["yaml"] }

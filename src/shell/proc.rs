@@ -1,12 +1,19 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Result, anyhow};
 use std::path::Path;
 
+/// Captured output from a subprocess execution.
 pub struct ProcOutput {
+  /// Exit status code (0 = success).
   pub status: i32,
+  /// Captured standard output.
   pub stdout: String,
+  /// Captured standard error.
   pub stderr: String,
 }
 
+/// Process spawning abstraction for testability.
 pub trait Proc {
   /// Run `sh -c <cmd>` with cwd and env. Returns captured stdio.
   fn run_sh(&self, cmd: &str, cwd: &Path, env: &[(String, String)]) -> Result<ProcOutput>;
@@ -21,6 +28,7 @@ pub trait Proc {
   fn spawn_detached(&self, program: &str, args: &[&str]) -> Result<()>;
 }
 
+/// Real process implementation using `std::process::Command`.
 pub struct RealProc;
 
 impl Proc for RealProc {

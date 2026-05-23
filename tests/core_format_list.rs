@@ -1,5 +1,8 @@
 use insta::assert_snapshot;
-use jjwt::core::format::{format_age, format_list_table, render_status_glyphs};
+use jjwt::core::format::{
+  format_age, format_list_json, format_list_table, format_remove_json, format_switch_json,
+  render_status_glyphs,
+};
 use jjwt::core::types::*;
 use std::path::PathBuf;
 
@@ -236,7 +239,7 @@ fn strip_ansi(s: &str) -> String {
     if c == '\u{1b}' && chars.peek() == Some(&'[') {
       // Consume `[` and everything up to and including a terminating letter.
       chars.next();
-      while let Some(c) = chars.next() {
+      for c in chars.by_ref() {
         if c.is_ascii_alphabetic() {
           break;
         }
@@ -575,4 +578,499 @@ fn statusline_empty_rows() {
   let out = jjwt::core::format::format_statusline(&[], None);
 
   assert_eq!(out, "@? | 0 ws");
+}
+
+// ── format_switch_json tests ──────────────────────────────────────────
+
+#[test]
+fn switch_json_basic_fields() {
+  let path = PathBuf::from("/repo/.worktrees/feat-x");
+  let out = format_switch_json("feat-x", &path, true);
+  let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed["name"], "feat-x");
+  assert_eq!(parsed["path"], "/repo/.worktrees/feat-x");
+  assert_eq!(parsed["created"], true);
+}
+
+#[test]
+fn switch_json_created_false() {
+  let path = PathBuf::from("/repo/.worktrees/feat-x");
+  let out = format_switch_json("feat-x", &path, false);
+  let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed["created"], false);
+}
+
+// ── format_remove_json tests ──────────────────────────────────────────
+
+#[test]
+fn remove_json_bookmark_deleted_true() {
+  let path = PathBuf::from("/repo/.worktrees/feat-x");
+  let out = format_remove_json("feat-x", &path, true);
+  let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed["name"], "feat-x");
+  assert_eq!(parsed["path"], "/repo/.worktrees/feat-x");
+  assert_eq!(parsed["bookmark_deleted"], true);
+}
+
+#[test]
+fn remove_json_bookmark_deleted_false() {
+  let path = PathBuf::from("/repo/.worktrees/feat-x");
+  let out = format_remove_json("feat-x", &path, false);
+  let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed["bookmark_deleted"], false);
+}
+
+// ── format_list_json tests ────────────────────────────────────────────
+
+#[test]
+fn list_json_single_workspace() {
+  let r = row("default");
+  let out = format_list_json(&[r]);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json array");
+
+  assert_eq!(parsed.len(), 1);
+  assert_eq!(parsed[0]["name"], "default");
+  assert_eq!(parsed[0]["kind"], "workspace");
+  assert_eq!(parsed[0]["is_default"], true);
+  assert_eq!(parsed[0]["commit"], "00000000");
+  assert_eq!(parsed[0]["age"], "9h");
+  assert_eq!(parsed[0]["message"], "msg");
+  assert_eq!(parsed[0]["ci_status"], "none");
+}
+
+#[test]
+fn list_json_null_url_and_summary() {
+  let r = row("default");
+  let out = format_list_json(&[r]);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json array");
+
+  assert!(parsed[0]["url"].is_null(), "empty url should be null");
+  assert!(
+    parsed[0]["summary"].is_null(),
+    "empty summary should be null"
+  );
+}
+
+#[test]
+fn list_json_non_null_url_and_summary() {
+  let mut r = row("feat");
+
+  r.url = "http://example.com/feat".into();
+  r.summary = "A short summary".into();
+
+  let out = format_list_json(&[r]);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json array");
+
+  assert_eq!(parsed[0]["url"], "http://example.com/feat");
+  assert_eq!(parsed[0]["summary"], "A short summary");
+}
+
+#[test]
+fn list_json_status_sub_object() {
+  let mut r = row("feat");
+
+  r.status = StatusFlags {
+    has_changes: true,
+    modified: true,
+    untracked: false,
+    stale: false,
+    conflicts: true,
+    has_remote: true,
+    vs_trunk: Some(TrunkRel::Ahead),
+  };
+
+  let out = format_list_json(&[r]);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json array");
+
+  let status = &parsed[0]["status"];
+
+  assert_eq!(status["has_changes"], true);
+  assert_eq!(status["modified"], true);
+  assert_eq!(status["untracked"], false);
+  assert_eq!(status["conflicts"], true);
+  assert_eq!(status["stale"], false);
+  assert_eq!(status["has_remote"], true);
+  assert_eq!(status["vs_trunk"], "ahead");
+}
+
+#[test]
+fn list_json_trunk_rel_variants() {
+  let variants = [
+    (Some(TrunkRel::IsTrunk), "is_trunk"),
+    (Some(TrunkRel::Ancestor), "ancestor"),
+    (Some(TrunkRel::Diverged), "diverged"),
+    (Some(TrunkRel::Ahead), "ahead"),
+    (Some(TrunkRel::Behind), "behind"),
+  ];
+
+  for (rel, expected) in variants {
+    let mut r = row("test");
+
+    r.status.vs_trunk = rel;
+
+    let out = format_list_json(&[r]);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+    assert_eq!(
+      parsed[0]["status"]["vs_trunk"], expected,
+      "TrunkRel::{expected} should map correctly"
+    );
+  }
+}
+
+#[test]
+fn list_json_trunk_rel_none_is_null() {
+  let mut r = row("test");
+
+  r.status.vs_trunk = None;
+
+  let out = format_list_json(&[r]);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+  assert!(parsed[0]["status"]["vs_trunk"].is_null());
+}
+
+#[test]
+fn list_json_head_diff_and_vs_trunk_numbers() {
+  let mut r = row("feat");
+
+  r.head_diff = LineDiff {
+    added: 42,
+    removed: 7,
+  };
+  r.vs_trunk = AheadBehind {
+    ahead: 5,
+    behind: 3,
+  };
+
+  let out = format_list_json(&[r]);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed[0]["head_diff"]["added"], 42);
+  assert_eq!(parsed[0]["head_diff"]["removed"], 7);
+  assert_eq!(parsed[0]["vs_trunk"]["ahead"], 5);
+  assert_eq!(parsed[0]["vs_trunk"]["behind"], 3);
+}
+
+#[test]
+fn list_json_ci_status_values() {
+  for (ci, expected) in [
+    (CiStatus::Pass, "pass"),
+    (CiStatus::Fail, "fail"),
+    (CiStatus::Pending, "pending"),
+    (CiStatus::None, "none"),
+  ] {
+    let mut r = row("test");
+
+    r.ci_status = ci;
+
+    let out = format_list_json(&[r]);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+    assert_eq!(parsed[0]["ci_status"], expected);
+  }
+}
+
+#[test]
+fn list_json_branch_row_kind() {
+  let r = ListRow {
+    name: "orphan".into(),
+    path: PathBuf::new(),
+    kind: ListRowKind::Branch,
+    url: String::new(),
+    is_current: false,
+    is_default: false,
+    status: StatusFlags::default(),
+    head_diff: LineDiff::default(),
+    vs_trunk: AheadBehind::default(),
+    commit: String::new(),
+    age: String::new(),
+    message: String::new(),
+    ci_status: CiStatus::None,
+    summary: String::new(),
+  };
+
+  let out = format_list_json(&[r]);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed[0]["kind"], "branch");
+}
+
+#[test]
+fn list_json_multiple_rows() {
+  let mut d = row("default");
+
+  d.is_current = true;
+
+  let mut f = row("feat");
+
+  f.head_diff = LineDiff {
+    added: 100,
+    removed: 50,
+  };
+
+  let out = format_list_json(&[d, f]);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed.len(), 2);
+  assert_eq!(parsed[0]["name"], "default");
+  assert_eq!(parsed[0]["is_current"], true);
+  assert_eq!(parsed[1]["name"], "feat");
+  assert_eq!(parsed[1]["head_diff"]["added"], 100);
+}
+
+// ── Styled cell builder coverage ──────────────────────────────────────
+
+#[test]
+fn styled_head_diff_add_only() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.head_diff = LineDiff {
+    added: 10,
+    removed: 0,
+  };
+
+  let out = format_list_table(&[r], true, None);
+
+  assert!(out.contains("\u{1b}["), "should contain ANSI escapes");
+  // The plain form "+10" should appear somewhere in the stripped output.
+  assert!(strip_ansi(&out).contains("+10"));
+}
+
+#[test]
+fn styled_head_diff_remove_only() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.head_diff = LineDiff {
+    added: 0,
+    removed: 5,
+  };
+
+  let out = format_list_table(&[r], true, None);
+
+  assert!(strip_ansi(&out).contains("-5"));
+}
+
+#[test]
+fn styled_head_diff_both() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.head_diff = LineDiff {
+    added: 42,
+    removed: 7,
+  };
+
+  let out = format_list_table(&[r], true, None);
+  let plain = strip_ansi(&out);
+
+  assert!(plain.contains("+42"));
+  assert!(plain.contains("-7"));
+}
+
+#[test]
+fn styled_ahead_behind_ahead_only() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.vs_trunk = AheadBehind {
+    ahead: 3,
+    behind: 0,
+  };
+
+  let out = format_list_table(&[r], true, None);
+
+  assert!(strip_ansi(&out).contains("↑3"));
+}
+
+#[test]
+fn styled_ahead_behind_behind_only() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.vs_trunk = AheadBehind {
+    ahead: 0,
+    behind: 12,
+  };
+
+  let out = format_list_table(&[r], true, None);
+
+  assert!(strip_ansi(&out).contains("↓12"));
+}
+
+#[test]
+fn styled_ahead_behind_both() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.vs_trunk = AheadBehind {
+    ahead: 5,
+    behind: 200,
+  };
+
+  let out = format_list_table(&[r], true, None);
+  let plain = strip_ansi(&out);
+
+  assert!(plain.contains("↑5"));
+  assert!(plain.contains("↓2C"));
+}
+
+#[test]
+fn styled_ci_status_pass() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.ci_status = CiStatus::Pass;
+
+  let out = format_list_table(&[r], true, None);
+
+  assert!(strip_ansi(&out).contains("✓"));
+  assert!(out.contains("\u{1b}["));
+}
+
+#[test]
+fn styled_ci_status_fail() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.ci_status = CiStatus::Fail;
+
+  let out = format_list_table(&[r], true, None);
+
+  assert!(strip_ansi(&out).contains("✗"));
+}
+
+#[test]
+fn styled_ci_status_pending() {
+  let mut r = row("feat");
+
+  r.is_current = true;
+  r.ci_status = CiStatus::Pending;
+
+  let out = format_list_table(&[r], true, None);
+
+  assert!(strip_ansi(&out).contains("◌"));
+}
+
+// ── Branch row gutter and path coverage ───────────────────────────────
+
+#[test]
+fn branch_row_uses_slash_gutter_and_empty_path() {
+  let branch = ListRow {
+    name: "orphan".into(),
+    path: PathBuf::new(),
+    kind: ListRowKind::Branch,
+    url: String::new(),
+    is_current: false,
+    is_default: false,
+    status: StatusFlags::default(),
+    head_diff: LineDiff::default(),
+    vs_trunk: AheadBehind::default(),
+    commit: String::new(),
+    age: String::new(),
+    message: String::new(),
+    ci_status: CiStatus::None,
+    summary: String::new(),
+  };
+
+  let out = format_list_table(&[branch], false, None);
+  let data_line = out.lines().nth(1).expect("should have data row");
+
+  assert!(
+    data_line.starts_with('/'),
+    "Branch row should use '/' gutter, got: {data_line}"
+  );
+}
+
+#[test]
+fn default_non_current_uses_caret_gutter() {
+  let mut r = row("default");
+
+  r.is_current = false;
+
+  let out = format_list_table(&[r], false, None);
+  let data_line = out.lines().nth(1).expect("should have data row");
+
+  assert!(
+    data_line.starts_with('^'),
+    "Non-current default should use '^' gutter, got: {data_line}"
+  );
+}
+
+// ── Styled truncation (ANSI-aware truncate_cell) ──────────────────────
+
+#[test]
+fn styled_truncation_preserves_ansi_correctness() {
+  // Build a row with a very long message that will be truncated, and
+  // render with styled=true at a tight width to force truncation of the
+  // styled Message column.
+  let mut r = row("default");
+
+  r.is_current = true;
+  r.message = "a".repeat(120);
+
+  let out = format_list_table(&[r], true, Some(90));
+
+  // The output should contain an ellipsis from truncation.
+  assert!(
+    out.contains('…'),
+    "styled output should contain ellipsis from truncation:\n{out}"
+  );
+  // Should still contain ANSI reset after truncation.
+  assert!(
+    out.contains("\u{1b}[0m"),
+    "should contain ANSI reset after truncation"
+  );
+}
+
+// ── Column shrink path (compute_widths shrinkable branch) ─────────────
+
+#[test]
+fn very_tight_terminal_shrinks_branch_column() {
+  // Branch (priority 1) is the only shrinkable column. At very tight
+  // widths it should shrink rather than disappear entirely, down to its
+  // min_width of 6.
+  let mut r = row("a-very-long-workspace-name");
+
+  r.is_current = true;
+  r.status.has_changes = true;
+
+  // At 20 columns, Branch must shrink to fit alongside Status.
+  let out = format_list_table(&[r], false, Some(20));
+  let header = out.lines().next().unwrap();
+
+  assert!(
+    header.contains("Branch"),
+    "Branch should survive via shrinking at 20 cols:\n{out}"
+  );
+}
+
+// ── Status glyph TrunkRel::Behind coverage ────────────────────────────
+
+#[test]
+fn status_glyphs_behind_shows_down_arrow() {
+  let flags = StatusFlags {
+    vs_trunk: Some(TrunkRel::Behind),
+    ..Default::default()
+  };
+
+  assert_eq!(render_status_glyphs(&flags), "    ↓");
+}
+
+// ── Status glyph TrunkRel::None coverage ──────────────────────────────
+
+#[test]
+fn status_glyphs_trunk_rel_none_is_blank() {
+  let flags = StatusFlags {
+    vs_trunk: Some(TrunkRel::None),
+    ..Default::default()
+  };
+
+  assert_eq!(render_status_glyphs(&flags), "");
 }

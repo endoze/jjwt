@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 // Ported from https://github.com/max-sixty/worktrunk (codename filter).
 
 use sha2::{Digest, Sha256};
@@ -47,6 +47,7 @@ pub fn codename(input: &str, words: usize) -> String {
   parts.join("-")
 }
 
+/// Compute a deterministic index into a word pool using SHA-256.
 fn codename_index(input: &str, position: usize, salt: usize, pool: &str, len: usize) -> usize {
   let mut hasher = Sha256::new();
 

@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Result, bail};
 use std::path::Path;
 
@@ -45,8 +47,7 @@ pub fn run(cwd: &Path, extra_args: Vec<String>) -> Result<i32> {
   Ok(status)
 }
 
-/// Simple POSIX shell escaping: wrap in single quotes, escaping any
-/// embedded single quotes.
+/// Wrap a string in POSIX single quotes when it contains special characters.
 fn shell_escape(s: &str) -> String {
   if s.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}[]<>?*~".contains(c)) {
     format!("'{}'", s.replace('\'', "'\\''"))

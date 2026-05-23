@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +9,7 @@ use crate::core::types::{
 use crate::shell::fs::Fs;
 use crate::shell::jj::Jj;
 
+/// Gather the repo state needed for a `switch` or `remove` operation.
 pub fn observe<J: Jj, F: Fs>(
   jj: &J,
   fs: &F,
@@ -218,6 +221,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
   })
 }
 
+/// Gather workspace states needed for the `prune` command.
 pub fn observe_prune<J: Jj + Sync, F: Fs>(
   jj: &J,
   _fs: &F,

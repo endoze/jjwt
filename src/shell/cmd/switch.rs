@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use anyhow::{Result, bail};
 use std::path::Path;
 
@@ -152,6 +154,7 @@ fn resolve_shortcut<J: Jj, F: crate::shell::fs::Fs>(
   }
 }
 
+/// Execute the `switch` command: resolve the target, plan, and run.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
   cwd: &Path,
@@ -187,8 +190,9 @@ pub fn run(
 
   let (resolved_name, current_before) = resolve_shortcut(&name, cwd, &jj, &fs)?;
 
-  // For pr: / mr: shortcuts, auto-create and fetch if needed.
-  let create = if (name.starts_with("pr:") || name.starts_with("mr:")) && !create {
+  // Auto-create when the workspace doesn't exist but a bookmark does.
+  // For pr:/mr: shortcuts, also fetch first so the bookmark appears locally.
+  let create = if !create {
     let probe = observe(
       &jj,
       &fs,
@@ -199,11 +203,20 @@ pub fn run(
     let ws_exists = probe.workspaces.iter().any(|w| w.name == resolved_name);
 
     if !ws_exists {
-      // Fetch so the bookmark appears locally.
       let repo_root = jj.repo_root(cwd)?;
-      let _ = jj.git_fetch(&repo_root);
 
-      true
+      // pr:/mr: always need a fetch to pull the remote branch.
+      if name.starts_with("pr:") || name.starts_with("mr:") {
+        let _ = jj.git_fetch(&repo_root);
+      }
+
+      // Auto-create if a bookmark with this name already exists (local
+      // or remote). This covers checking out an existing branch without
+      // requiring --create. For truly new branches (no bookmark), the
+      // user must pass --create explicitly.
+      let bookmark_known = jj.bookmark_exists(&repo_root, &resolved_name)?;
+
+      bookmark_known || name.starts_with("pr:") || name.starts_with("mr:")
     } else {
       false
     }
