@@ -55,7 +55,7 @@ pub fn find_config(start: &Path, override_path: Option<&Path>) -> Result<PathBuf
 pub fn load_config(path: &Path) -> Result<Config> {
   let src = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
 
-  parse(&src).map_err(|e| anyhow::anyhow!("{e}"))
+  Ok(parse(&src)?)
 }
 
 /// Resolve a repository's identity string for matching against
@@ -153,17 +153,7 @@ pub fn normalize_remote_url(url: &str) -> Option<String> {
 /// Find the jj repo root by walking upward from `start` looking for a
 /// `.jj/` directory.
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
-  let mut p = start.to_path_buf();
-
-  loop {
-    if p.join(".jj").is_dir() {
-      return Some(p);
-    }
-
-    if !p.pop() {
-      return None;
-    }
-  }
+  crate::shell::jj::find_nearest_jj_dir(start)
 }
 
 /// Load and merge both config layers into a single `MergedConfig`.

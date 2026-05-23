@@ -43,7 +43,7 @@ pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
   let dest_path = &dest_ws.path;
 
   // Get tracked files in the source workspace to identify ignored files.
-  let tracked = tracked_files(&jj, &obs.repo_root, source)?;
+  let tracked = tracked_files(&obs.repo_root, source)?;
 
   // Walk source directory, skip .jj/ and tracked files, copy the rest.
   let mut copied = 0u32;
@@ -90,7 +90,7 @@ pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
 }
 
 /// List all tracked files in a workspace via `jj file list`.
-fn tracked_files(_jj: &JjLib, repo_root: &Path, workspace: &str) -> Result<HashSet<PathBuf>> {
+fn tracked_files(repo_root: &Path, workspace: &str) -> Result<HashSet<PathBuf>> {
   let ws_path = if workspace == "default" {
     repo_root.to_path_buf()
   } else {

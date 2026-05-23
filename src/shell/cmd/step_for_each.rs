@@ -1,6 +1,6 @@
 #![cfg(not(tarpaulin_include))]
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 
 use crate::core::template::render;
@@ -53,7 +53,7 @@ pub fn run(cwd: &Path, argv: Vec<String>) -> Result<()> {
     let mut rendered_tokens: Vec<String> = Vec::with_capacity(argv.len());
 
     for tok in &argv {
-      let r = render(tok, &ctx).map_err(|e| anyhow::anyhow!("render '{tok}': {e}"))?;
+      let r = render(tok, &ctx).with_context(|| format!("render '{tok}'"))?;
 
       rendered_tokens.push(r);
     }

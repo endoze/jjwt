@@ -78,51 +78,59 @@ pub trait Jj {
   fn bookmark_rename(&self, repo_root: &Path, old: &str, new: &str) -> Result<()>;
 }
 
-/// Walk up from `start` to find the repo root (parent of `.jj/`).
-pub(crate) fn find_repo_root(start: &Path) -> Result<std::path::PathBuf> {
+/// Walk up from `start` to find the nearest directory containing `.jj/`.
+/// Returns `None` if no `.jj/` directory is found.
+pub(crate) fn find_nearest_jj_dir(start: &Path) -> Option<std::path::PathBuf> {
   let mut p = start.to_path_buf();
 
   loop {
-    let jj_dir = p.join(".jj");
-
-    if jj_dir.is_dir() {
-      let marker = jj_dir.join("repo");
-
-      // In a non-default workspace, `.jj/repo` is a file whose
-      // contents point to the main repo's `.jj/repo` directory.
-      // In the main repo, `.jj/repo` is itself a directory. Follow
-      // the pointer so callers always get the main repo root.
-      if marker.is_file() {
-        let content = std::fs::read_to_string(&marker)
-          .map_err(|e| anyhow::anyhow!("failed to read {marker:?}: {e}"))?;
-        let target = std::path::PathBuf::from(content.trim());
-
-        let resolved = if target.is_absolute() {
-          target
-        } else {
-          jj_dir.join(target)
-        };
-
-        let canonical = std::fs::canonicalize(&resolved)
-          .map_err(|e| anyhow::anyhow!("failed to resolve {resolved:?}: {e}"))?;
-        let main_root = canonical
-          .parent()
-          .and_then(|p| p.parent())
-          .ok_or_else(|| anyhow::anyhow!("invalid repo pointer in {marker:?}"))?
-          .to_path_buf();
-
-        return Ok(main_root);
-      }
-
-      return Ok(p);
+    if p.join(".jj").is_dir() {
+      return Some(p);
     }
 
     if !p.pop() {
-      return Err(anyhow::anyhow!(
-        "not inside a jj repo (no .jj/ found above {start:?})"
-      ));
+      return None;
     }
   }
+}
+
+/// Walk up from `start` to find the repo root (parent of `.jj/`).
+/// When inside a non-default workspace, follows the `.jj/repo` pointer
+/// to return the main repo root.
+pub(crate) fn find_repo_root(start: &Path) -> Result<std::path::PathBuf> {
+  let p = find_nearest_jj_dir(start)
+    .ok_or_else(|| anyhow::anyhow!("not inside a jj repo (no .jj/ found above {start:?})"))?;
+
+  let jj_dir = p.join(".jj");
+  let marker = jj_dir.join("repo");
+
+  // In a non-default workspace, `.jj/repo` is a file whose
+  // contents point to the main repo's `.jj/repo` directory.
+  // In the main repo, `.jj/repo` is itself a directory. Follow
+  // the pointer so callers always get the main repo root.
+  if marker.is_file() {
+    let content = std::fs::read_to_string(&marker)
+      .map_err(|e| anyhow::anyhow!("failed to read {marker:?}: {e}"))?;
+    let target = std::path::PathBuf::from(content.trim());
+
+    let resolved = if target.is_absolute() {
+      target
+    } else {
+      jj_dir.join(target)
+    };
+
+    let canonical = std::fs::canonicalize(&resolved)
+      .map_err(|e| anyhow::anyhow!("failed to resolve {resolved:?}: {e}"))?;
+    let main_root = canonical
+      .parent()
+      .and_then(|p| p.parent())
+      .ok_or_else(|| anyhow::anyhow!("invalid repo pointer in {marker:?}"))?
+      .to_path_buf();
+
+    return Ok(main_root);
+  }
+
+  Ok(p)
 }
 
 /// Compute the path to a workspace directory. For "default", this is repo_root;

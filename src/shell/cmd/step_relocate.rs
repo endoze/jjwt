@@ -40,7 +40,7 @@ pub fn run(
     rename_bookmark,
     format,
   };
-  let plan = plan_relocate(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
+  let plan = plan_relocate(&cfg, &args, &obs)?;
   let repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
   let mut rt = Runtime::new(jj, fs, proc)
     .with_root(obs.repo_root.clone())

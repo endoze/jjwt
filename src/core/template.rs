@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use crate::core::filters::{
   codename::{CODENAME_MAX_WORDS, codename},
   hash::short_hash,
@@ -41,9 +43,12 @@ fn build_env() -> Environment<'static> {
   env
 }
 
+/// Shared template environment, built once on first use.
+static ENV: LazyLock<Environment<'static>> = LazyLock::new(build_env);
+
 /// Render a minijinja template string using the given context variables.
 pub fn render(template: &str, ctx: &RenderContext) -> Result<String, CoreError> {
-  let env = build_env();
+  let env = &*ENV;
   let tmpl = env
     .template_from_str(template)
     .map_err(|e| CoreError::TemplateRender(e.to_string()))?;

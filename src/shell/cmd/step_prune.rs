@@ -32,7 +32,7 @@ pub fn run(
     no_hooks,
     format,
   };
-  let plan = plan_prune(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
+  let plan = plan_prune(&cfg, &args, &obs)?;
   let repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
   let mut rt = Runtime::new(jj, fs, proc)
     .with_root(obs.repo_root.clone())

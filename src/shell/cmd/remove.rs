@@ -1,6 +1,6 @@
 #![cfg(not(tarpaulin_include))]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::core::format::{format_dry_run, format_dry_run_json};
@@ -16,17 +16,11 @@ use crate::shell::runtime::{Runtime, execute};
 
 /// Remove one or more workspaces. When `names` is empty, defaults to the
 /// workspace whose path contains `cwd` (observation-derived).
-#[allow(clippy::too_many_arguments)]
 pub fn run(
   cwd: &Path,
   config_path: Option<&Path>,
   names: Vec<String>,
-  force: bool,
-  no_hooks: bool,
-  no_delete_branch: bool,
-  force_delete: bool,
-  dry_run: bool,
-  format: OutputFormat,
+  args: RemoveArgs,
 ) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)?;
 
@@ -69,19 +63,15 @@ pub fn run(
     rt.repo_root = obs.repo_root.clone();
     rt.repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
 
-    let args = RemoveArgs {
+    let per_name_args = RemoveArgs {
       name: name.clone(),
-      force,
-      no_hooks,
-      no_delete_branch,
-      force_delete,
-      format,
+      ..args.clone()
     };
     let plan =
-      plan_remove(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("remove '{name}': {e}"))?;
+      plan_remove(&cfg, &per_name_args, &obs).with_context(|| format!("remove '{name}'"))?;
 
-    if dry_run {
-      let output = match format {
+    if args.dry_run {
+      let output = match args.format {
         OutputFormat::Json => format_dry_run_json(&plan.actions),
         _ => format_dry_run(&plan.actions),
       };
@@ -97,7 +87,8 @@ pub fn run(
       println!("{line}");
     }
 
-    if format != OutputFormat::Json && obs.current_workspace.as_deref() == Some(name.as_str()) {
+    if args.format != OutputFormat::Json && obs.current_workspace.as_deref() == Some(name.as_str())
+    {
       println!("cd:{}", obs.repo_root.display());
     }
   }
