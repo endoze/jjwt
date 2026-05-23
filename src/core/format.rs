@@ -16,7 +16,8 @@ const EMPTY_PENALTY: u8 = 10;
 
 /// Header labels for the 11 list table columns.
 const HEADERS: &[&str] = &[
-  "Branch", "Status", "HEAD±", "main↕", "CI", "Path", "URL", "Commit", "Age", "Message", "Summary",
+  "Bookmark", "Status", "HEAD±", "main↕", "CI", "Path", "URL", "Commit", "Age", "Message",
+  "Summary",
 ];
 
 /// Text alignment within a column.
@@ -46,7 +47,7 @@ struct ColSpec {
 
 /// Layout specifications for each of the 11 list table columns.
 const COL_SPECS: [ColSpec; 11] = [
-  // Branch
+  // Bookmark
   ColSpec {
     priority: 1,
     shrinkable: true,
@@ -494,7 +495,7 @@ fn compute_widths(cells: &[[Cell; 11]], term_width: Option<u16>) -> ([usize; 11]
 
 /// Return the gutter marker character for a row (`@`, `^`, `+`, or `/`).
 fn gutter_char(row: &ListRow) -> char {
-  if matches!(row.kind, ListRowKind::Branch) {
+  if matches!(row.kind, ListRowKind::Bookmark) {
     '/'
   } else if row.is_current {
     '@'
@@ -508,7 +509,7 @@ fn gutter_char(row: &ListRow) -> char {
 /// Format the workspace path column relative to the repo root.
 fn format_path(row: &ListRow) -> String {
   match row.kind {
-    ListRowKind::Branch => String::new(),
+    ListRowKind::Bookmark => String::new(),
     ListRowKind::Workspace if row.is_default => ".".to_string(),
     ListRowKind::Workspace => format!("./.worktrees/{}", row.name),
   }
@@ -854,7 +855,7 @@ fn list_row_json(r: &ListRow) -> Value {
     Value::String(
       match r.kind {
         ListRowKind::Workspace => "workspace",
-        ListRowKind::Branch => "branch",
+        ListRowKind::Bookmark => "bookmark",
       }
       .into(),
     ),

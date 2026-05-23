@@ -18,8 +18,6 @@ pub mod shell;
 pub mod step_copy_ignored;
 /// Generate and apply an LLM commit message.
 pub mod step_describe;
-/// Show diff between trunk and current workspace.
-pub mod step_diff;
 /// Evaluate a template expression in the current context.
 pub mod step_eval;
 /// Run a command in every workspace.

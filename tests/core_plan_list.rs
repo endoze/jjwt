@@ -37,7 +37,7 @@ fn obs_with_workspaces() -> ObservedListState {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
     current_workspace: Some("default".into()),
-    extra_branch_names: Vec::new(),
+    extra_bookmark_names: Vec::new(),
     extra_remote_only_names: Vec::new(),
     rows: vec![
       ObservedListRow {
@@ -280,10 +280,10 @@ fn list_statusline_format_emits_compact_line() {
 }
 
 #[test]
-fn list_json_with_extra_branch_rows() {
+fn list_json_with_extra_bookmark_rows() {
   let mut obs = obs_with_workspaces();
 
-  obs.extra_branch_names = vec!["orphan-branch".into()];
+  obs.extra_bookmark_names = vec!["orphan-branch".into()];
 
   let plan = plan_list(&cfg_with_list(), &obs, &DISPLAY, OutputFormat::Json).expect("plan ok");
 
@@ -295,5 +295,5 @@ fn list_json_with_extra_branch_rows() {
 
   assert_eq!(parsed.len(), 3);
   assert_eq!(parsed[2]["name"], "orphan-branch");
-  assert_eq!(parsed[2]["kind"], "branch");
+  assert_eq!(parsed[2]["kind"], "bookmark");
 }

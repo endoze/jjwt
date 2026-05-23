@@ -330,8 +330,8 @@ fn narrow_terminal_drops_low_priority_columns() {
     "Message should be hidden at 80 cols:\n{out}"
   );
   assert!(
-    header.contains("Branch"),
-    "Branch should remain at 80 cols:\n{out}"
+    header.contains("Bookmark"),
+    "Bookmark should remain at 80 cols:\n{out}"
   );
   assert!(
     header.contains("Status"),
@@ -347,8 +347,8 @@ fn very_narrow_terminal_keeps_essential_columns() {
   let header = out.lines().next().unwrap();
 
   assert!(
-    header.contains("Branch"),
-    "Branch should survive at 40 cols:\n{out}"
+    header.contains("Bookmark"),
+    "Bookmark should survive at 40 cols:\n{out}"
   );
   assert!(
     header.contains("Status"),
@@ -776,11 +776,11 @@ fn list_json_ci_status_values() {
 }
 
 #[test]
-fn list_json_branch_row_kind() {
+fn list_json_bookmark_row_kind() {
   let r = ListRow {
     name: "orphan".into(),
     path: PathBuf::new(),
-    kind: ListRowKind::Branch,
+    kind: ListRowKind::Bookmark,
     url: String::new(),
     is_current: false,
     is_default: false,
@@ -797,7 +797,7 @@ fn list_json_branch_row_kind() {
   let out = format_list_json(&[r]);
   let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
 
-  assert_eq!(parsed[0]["kind"], "branch");
+  assert_eq!(parsed[0]["kind"], "bookmark");
 }
 
 #[test]
@@ -958,14 +958,14 @@ fn styled_ci_status_pending() {
   assert!(strip_ansi(&out).contains("◌"));
 }
 
-// ── Branch row gutter and path coverage ───────────────────────────────
+// ── Bookmark row gutter and path coverage ───────────────────────────────
 
 #[test]
-fn branch_row_uses_slash_gutter_and_empty_path() {
-  let branch = ListRow {
+fn bookmark_row_uses_slash_gutter_and_empty_path() {
+  let bookmark = ListRow {
     name: "orphan".into(),
     path: PathBuf::new(),
-    kind: ListRowKind::Branch,
+    kind: ListRowKind::Bookmark,
     url: String::new(),
     is_current: false,
     is_default: false,
@@ -979,12 +979,12 @@ fn branch_row_uses_slash_gutter_and_empty_path() {
     summary: String::new(),
   };
 
-  let out = format_list_table(&[branch], false, None);
+  let out = format_list_table(&[bookmark], false, None);
   let data_line = out.lines().nth(1).expect("should have data row");
 
   assert!(
     data_line.starts_with('/'),
-    "Branch row should use '/' gutter, got: {data_line}"
+    "Bookmark row should use '/' gutter, got: {data_line}"
   );
 }
 
@@ -1029,11 +1029,11 @@ fn styled_truncation_preserves_ansi_correctness() {
   );
 }
 
-// ── Column shrink path (compute_widths shrinkable branch) ─────────────
+// ── Column shrink path (compute_widths shrinkable bookmark) ─────────────
 
 #[test]
-fn very_tight_terminal_shrinks_branch_column() {
-  // Branch (priority 1) is the only shrinkable column. At very tight
+fn very_tight_terminal_shrinks_bookmark_column() {
+  // Bookmark (priority 1) is the only shrinkable column. At very tight
   // widths it should shrink rather than disappear entirely, down to its
   // min_width of 6.
   let mut r = row("a-very-long-workspace-name");
@@ -1041,13 +1041,13 @@ fn very_tight_terminal_shrinks_branch_column() {
   r.is_current = true;
   r.status.has_changes = true;
 
-  // At 20 columns, Branch must shrink to fit alongside Status.
+  // At 20 columns, Bookmark must shrink to fit alongside Status.
   let out = format_list_table(&[r], false, Some(20));
   let header = out.lines().next().unwrap();
 
   assert!(
-    header.contains("Branch"),
-    "Branch should survive via shrinking at 20 cols:\n{out}"
+    header.contains("Bookmark"),
+    "Bookmark should survive via shrinking at 20 cols:\n{out}"
   );
 }
 

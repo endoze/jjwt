@@ -128,12 +128,6 @@ enum StepSub {
     #[arg(long)]
     dry_run: bool,
   },
-  /// Show diff of current workspace against trunk.
-  Diff {
-    /// Extra arguments forwarded to `jj diff`.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    args: Vec<String>,
-  },
   /// Interactive workspace picker with preview.
   Pick,
   /// Copy jj-ignored files from one workspace to another (CoW reflink when available).
@@ -234,7 +228,7 @@ struct RemoveCmd {
 struct ListCmd {
   /// Include local bookmarks that don't have a workspace.
   #[arg(long)]
-  branches: bool,
+  bookmarks: bool,
   /// Include remote-only bookmarks.
   #[arg(long)]
   remotes: bool,
@@ -379,7 +373,7 @@ fn main() -> Result<()> {
       cwd,
       config,
       jjwt::core::types::ListOptions {
-        include_branches: l.branches,
+        include_bookmarks: l.bookmarks,
         include_remotes: l.remotes,
         full: l.full,
       },
@@ -440,11 +434,6 @@ fn main() -> Result<()> {
         format.into(),
       ),
       StepSub::Describe { dry_run } => cmd::step_describe::run(cwd, config, dry_run),
-      StepSub::Diff { args } => {
-        let code = cmd::step_diff::run(cwd, args)?;
-
-        std::process::exit(code);
-      }
       StepSub::Pick => cmd::step_pick::run(cwd),
       StepSub::CopyIgnored { source, dest } => {
         cmd::step_copy_ignored::run(cwd, &source, dest.as_deref())

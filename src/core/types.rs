@@ -806,8 +806,8 @@ pub struct ObservedListState {
   /// Per-workspace observation data.
   pub rows: Vec<ObservedListRow>,
   /// Names of bookmarks without a workspace, only populated when the
-  /// caller asked for `--branches`.
-  pub extra_branch_names: Vec<String>,
+  /// caller asked for `--bookmarks`.
+  pub extra_bookmark_names: Vec<String>,
   /// Names of remote-only bookmarks, only populated when the caller
   /// asked for `--remotes`. Format: bare local name (the `@<remote>`
   /// suffix is stripped).
@@ -815,7 +815,7 @@ pub struct ObservedListState {
 }
 
 /// What kind of row this is. `Workspace` rows have a real path and full
-/// observation details. `Branch` rows are bookmarks without a workspace
+/// observation details. `Bookmark` rows are bookmarks without a workspace
 /// (either local-only-no-worktree or remote-only) and have empty
 /// working-copy state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -824,14 +824,14 @@ pub enum ListRowKind {
   #[default]
   Workspace,
   /// Row represents a bookmark without a workspace.
-  Branch,
+  Bookmark,
 }
 
 /// Options that gate which rows `observe_list` collects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ListOptions {
   /// Include local bookmarks that don't have a workspace.
-  pub include_branches: bool,
+  pub include_bookmarks: bool,
   /// Include remote-only bookmarks (`<name>@<remote>` with no local).
   pub include_remotes: bool,
   /// Reserved for later — adds extra columns. Phase 1 plumbs the flag;

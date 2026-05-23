@@ -91,7 +91,7 @@ pub fn observe<J: Jj, F: Fs>(
 /// Gather everything needed for `jjwt list`. One pass; sequential per-workspace
 /// `jj` calls. For typical workspace counts (N ≤ ~10) the latency is fine.
 ///
-/// `opts.include_branches` triggers a `jj bookmark list` to collect names
+/// `opts.include_bookmarks` triggers a `jj bookmark list` to collect names
 /// of local bookmarks that don't have a corresponding workspace.
 /// `opts.include_remotes` collects remote-only bookmarks (local doesn't
 /// exist; we already know `bookmarks_with_remote()` returns the local
@@ -190,7 +190,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
 
   let ws_name_set: std::collections::HashSet<&str> =
     workspaces.iter().map(|w| w.name.as_str()).collect();
-  let extra_branch_names = if opts.include_branches {
+  let extra_bookmark_names = if opts.include_bookmarks {
     all_local
       .iter()
       .filter(|n| !ws_name_set.contains(n.as_str()))
@@ -216,7 +216,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
     is_jj_repo: true,
     current_workspace,
     rows,
-    extra_branch_names,
+    extra_bookmark_names,
     extra_remote_only_names,
   })
 }

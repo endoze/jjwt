@@ -213,7 +213,10 @@ url = "http://example.com/{{ branch }}"
   eprintln!("---list output---\n{text}\n---");
 
   // Header present
-  assert!(text.contains("Branch"), "missing Branch header:\n{text}");
+  assert!(
+    text.contains("Bookmark"),
+    "missing Bookmark header:\n{text}"
+  );
   assert!(text.contains("Status"), "missing Status header:\n{text}");
   assert!(text.contains("HEAD±"), "missing HEAD± header:\n{text}");
   assert!(text.contains("main↕"), "missing main↕ header:\n{text}");

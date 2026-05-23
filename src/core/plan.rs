@@ -865,11 +865,11 @@ fn build_list_row(
 /// Build a placeholder row for a bookmark that doesn't have a workspace.
 /// Phase 1 leaves working-copy details empty; richer details can be added
 /// in Phase 2 alongside `worktree-path` template support.
-fn build_branch_row(name: &str) -> ListRow {
+fn build_bookmark_row(name: &str) -> ListRow {
   ListRow {
     name: name.into(),
     path: PathBuf::new(),
-    kind: ListRowKind::Branch,
+    kind: ListRowKind::Bookmark,
     url: String::new(),
     is_current: false,
     is_default: false,
@@ -896,7 +896,7 @@ pub fn plan_list(
   }
 
   let mut rows = Vec::with_capacity(
-    obs.rows.len() + obs.extra_branch_names.len() + obs.extra_remote_only_names.len(),
+    obs.rows.len() + obs.extra_bookmark_names.len() + obs.extra_remote_only_names.len(),
   );
 
   for r in &obs.rows {
@@ -905,12 +905,12 @@ pub fn plan_list(
     rows.push(build_list_row(cfg, r, &obs.repo_root, is_current)?);
   }
 
-  for n in &obs.extra_branch_names {
-    rows.push(build_branch_row(n));
+  for n in &obs.extra_bookmark_names {
+    rows.push(build_bookmark_row(n));
   }
 
   for n in &obs.extra_remote_only_names {
-    rows.push(build_branch_row(n));
+    rows.push(build_bookmark_row(n));
   }
 
   let mut plan = Plan::new();

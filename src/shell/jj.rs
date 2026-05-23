@@ -57,7 +57,7 @@ pub trait Jj {
   /// "tracks remote" glyph in the list view.
   fn bookmarks_with_remote(&self, repo_root: &Path) -> Result<std::collections::HashSet<String>>;
   /// All local bookmark names (one entry per bookmark, no `@<remote>`
-  /// suffix). Used by `list --branches` and `--remotes` to discover
+  /// suffix). Used by `list --bookmarks` and `--remotes` to discover
   /// bookmarks that don't have an associated workspace.
   fn bookmarks_local(&self, repo_root: &Path) -> Result<Vec<String>>;
   /// All bookmark sets in one call. Returns `(all_local, with_remote)`.
