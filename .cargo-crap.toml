@@ -1,0 +1,22 @@
+threshold = 30.0
+fail-above = true
+missing = "pessimistic"
+exclude = ["tests/**", "fixtures/**"]
+allow = [
+  "src/main.rs",
+  "src/cli.rs",
+  "src/shell/observe.rs",
+  "src/shell/trash.rs",
+  "src/shell/fs.rs",
+  "src/shell/state.rs",
+  "src/shell/jj.rs",
+  "src/shell/ci.rs",
+  "src/shell/runtime.rs",
+  "src/shell/llm.rs",
+  "src/shell/config_loader.rs",
+  "src/shell/jj_lib.rs",
+  "src/shell/approvals.rs",
+  "src/shell/proc.rs",
+  "src/shell/llm_cache.rs",
+  "src/shell/cmd/**",
+]
