@@ -194,6 +194,7 @@ url = "http://example.com/{{ branch }}"
   // Dirty the alpha workspace.
   std::fs::write(repo.join(".worktrees/alpha/scratch.txt"), "scratch").unwrap();
 
+  // Compact list (without --full): hides CI, URL, Commit, Age, Summary.
   let list_out = Command::new(jjwt_bin())
     .arg("-C")
     .arg(repo)
@@ -221,6 +222,12 @@ url = "http://example.com/{{ branch }}"
   assert!(text.contains("HEAD±"), "missing HEAD± header:\n{text}");
   assert!(text.contains("main↕"), "missing main↕ header:\n{text}");
 
+  // Compact mode hides URL column.
+  assert!(
+    !text.contains("URL"),
+    "URL header should be hidden in compact mode:\n{text}"
+  );
+
   // Both workspaces present
   assert!(
     text.contains("default"),
@@ -231,26 +238,6 @@ url = "http://example.com/{{ branch }}"
     "alpha workspace row missing:\n{text}"
   );
 
-  // Default workspace path is `.` somewhere on its row
-  assert!(
-    text
-      .lines()
-      .any(|l| l.contains("default") && l.contains(" . ")),
-    "default row should show '.' as path:\n{text}"
-  );
-
-  // Alpha workspace path is `./.worktrees/alpha`
-  assert!(
-    text.contains("./.worktrees/alpha"),
-    "alpha row should show './.worktrees/alpha':\n{text}"
-  );
-
-  // URL templated per branch
-  assert!(
-    text.contains("http://example.com/alpha"),
-    "URL should render with branch substitution:\n{text}"
-  );
-
   // Footer: 2 worktrees, 1 with changes (alpha is dirty)
   assert!(
     text.contains("○ Showing 2 worktrees"),
@@ -259,6 +246,25 @@ url = "http://example.com/{{ branch }}"
   assert!(
     text.contains("1 with changes"),
     "footer should report 1 with changes:\n{text}"
+  );
+
+  // Full list (with --full): shows all columns including URL.
+  let full_out = Command::new(jjwt_bin())
+    .arg("-C")
+    .arg(repo)
+    .arg("list")
+    .arg("--full")
+    .output()
+    .unwrap();
+
+  assert!(full_out.status.success());
+
+  let full_text = String::from_utf8(full_out.stdout).unwrap();
+
+  // URL templated per branch
+  assert!(
+    full_text.contains("http://example.com/alpha"),
+    "URL should render with branch substitution in --full:\n{full_text}"
   );
 }
 

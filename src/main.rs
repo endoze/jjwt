@@ -62,6 +62,8 @@ enum Cmd {
   List(ListCmd),
   /// Run or inspect hooks.
   Hook(HookCmd),
+  /// Check environment and configuration health.
+  Doctor,
   /// Manage jjwt configuration.
   Config(ConfigCmd),
   /// Low-level workspace utilities.
@@ -137,6 +139,13 @@ enum StepSub {
     /// Destination workspace name (defaults to current workspace).
     dest: Option<String>,
   },
+  /// List workspace names for shell completion (hidden).
+  #[command(name = "_complete-workspaces", hide = true)]
+  CompleteWorkspaces {
+    /// Only show workspaces matching this prefix.
+    #[arg(long)]
+    prefix: Option<String>,
+  },
   /// Manage per-workspace variables (stored in `.jj/jjwt-state.toml`).
   Var {
     #[command(subcommand)]
@@ -192,6 +201,9 @@ struct SwitchCmd {
   /// Deprecated alias for `--no-hooks`.
   #[arg(long = "no-verify", hide = true)]
   no_verify: bool,
+  /// Show what would be done without actually doing it.
+  #[arg(long)]
+  dry_run: bool,
   /// Output format: `text` (default) or `json`.
   #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
   format: OutputFormat,
@@ -218,6 +230,9 @@ struct RemoveCmd {
   /// Deprecated alias for `--no-hooks`.
   #[arg(long = "no-verify", hide = true)]
   no_verify: bool,
+  /// Show what would be done without actually doing it.
+  #[arg(long)]
+  dry_run: bool,
   /// Output format: `text` (default) or `json`.
   #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
   format: OutputFormat,
@@ -232,8 +247,7 @@ struct ListCmd {
   /// Include remote-only bookmarks.
   #[arg(long)]
   remotes: bool,
-  /// Reserved for additional columns (CI / summary). Phase 1: flag is
-  /// plumbed through, but the column set is unchanged.
+  /// Show additional columns (CI, URL, Commit, Age, Summary).
   #[arg(long)]
   full: bool,
   /// Output format: `text` (default) or `json`.
@@ -283,19 +297,19 @@ struct ConfigCmd {
 /// Available config sub-subcommands.
 #[derive(Subcommand)]
 enum ConfigSub {
+  /// Validate the configuration.
+  Check,
   /// Shell integration helpers.
   Shell(ConfigShellCmd),
   /// Scaffold a new configuration file.
   Create(ConfigCreateCmd),
   /// Display the resolved configuration.
   Show,
-  /// Generate shell completion scripts.
-  Completions(ConfigCompletionsCmd),
 }
 
-/// Arguments for the `config completions` command.
+/// Arguments for the `config shell completions` command.
 #[derive(Args)]
-struct ConfigCompletionsCmd {
+struct ConfigShellCompletionsCmd {
   /// Shell to generate completions for.
   shell: Shell,
 }
@@ -324,6 +338,8 @@ struct ConfigShellCmd {
 enum ConfigShellSub {
   /// Emit shell initialization code.
   Init(ConfigShellInitCmd),
+  /// Generate shell completion scripts.
+  Completions(ConfigShellCompletionsCmd),
 }
 
 /// Arguments for the `config shell init` command.
@@ -357,6 +373,7 @@ fn main() -> Result<()> {
       s.no_hooks || s.no_verify,
       s.execute,
       s.clobber,
+      s.dry_run,
       s.format.into(),
     ),
     Cmd::Remove(r) => cmd::remove::run(
@@ -367,6 +384,7 @@ fn main() -> Result<()> {
       r.no_hooks || r.no_verify,
       r.no_delete_branch,
       r.force_delete,
+      r.dry_run,
       r.format.into(),
     ),
     Cmd::List(l) => cmd::list::run(
@@ -395,17 +413,19 @@ fn main() -> Result<()> {
         cmd::hook::run(cwd, config, name, h.vars)
       }
     }
+    Cmd::Doctor => cmd::doctor::run(cwd),
     Cmd::Config(c) => match c.sub {
+      ConfigSub::Check => cmd::config_check::run(cwd, config),
       ConfigSub::Shell(s) => match s.sub {
         ConfigShellSub::Init(i) => cmd::shell::dispatch(&i.shell),
+        ConfigShellSub::Completions(c) => {
+          clap_complete::generate(c.shell, &mut Cli::command(), "jjwt", &mut std::io::stdout());
+
+          Ok(())
+        }
       },
       ConfigSub::Create(c) => cmd::config_create::run(cwd, c.project, c.user),
       ConfigSub::Show => cmd::config_show::run(cwd, config),
-      ConfigSub::Completions(c) => {
-        clap_complete::generate(c.shell, &mut Cli::command(), "jjwt", &mut std::io::stdout());
-
-        Ok(())
-      }
     },
     Cmd::Step(s) => match s.sub {
       StepSub::Eval { template } => cmd::step_eval::run(cwd, &template),
@@ -438,6 +458,7 @@ fn main() -> Result<()> {
       StepSub::CopyIgnored { source, dest } => {
         cmd::step_copy_ignored::run(cwd, &source, dest.as_deref())
       }
+      StepSub::CompleteWorkspaces { prefix } => cmd::complete::run(cwd, prefix.as_deref()),
       StepSub::Var { sub } => match sub {
         VarSub::Set { key, value } => cmd::step_var::run_set(cwd, &key, &value),
         VarSub::Get { key } => cmd::step_var::run_get(cwd, &key),

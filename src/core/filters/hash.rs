@@ -18,7 +18,7 @@ pub fn short_hash(s: &str) -> String {
   let c1 = CHARS[((hash / 36) % 36) as usize];
   let c2 = CHARS[((hash / 1296) % 36) as usize];
 
-  String::from_utf8(vec![c0, c1, c2]).unwrap()
+  [c0 as char, c1 as char, c2 as char].iter().collect()
 }
 
 #[cfg(test)]

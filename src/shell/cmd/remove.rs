@@ -3,6 +3,7 @@
 use anyhow::Result;
 use std::path::Path;
 
+use crate::core::format::{format_dry_run, format_dry_run_json};
 use crate::core::plan::plan_remove;
 use crate::core::types::{OutputFormat, RemoveArgs};
 use crate::shell::config_loader::load_merged_config;
@@ -24,6 +25,7 @@ pub fn run(
   no_hooks: bool,
   no_delete_branch: bool,
   force_delete: bool,
+  dry_run: bool,
   format: OutputFormat,
 ) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)?;
@@ -78,10 +80,25 @@ pub fn run(
     let plan =
       plan_remove(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("remove '{name}': {e}"))?;
 
+    if dry_run {
+      let output = match format {
+        OutputFormat::Json => format_dry_run_json(&plan.actions),
+        _ => format_dry_run(&plan.actions),
+      };
+
+      println!("{output}");
+
+      continue;
+    }
+
     let printed = execute(&plan, &mut rt)?;
 
-    for line in printed {
+    for line in &printed {
       println!("{line}");
+    }
+
+    if format != OutputFormat::Json && obs.current_workspace.as_deref() == Some(name.as_str()) {
+      println!("cd:{}", obs.repo_root.display());
     }
   }
 

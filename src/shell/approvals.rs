@@ -32,10 +32,18 @@ pub fn approvals_path() -> Result<PathBuf> {
 
 /// Produce a deterministic SHA-256 hash string for a rendered command.
 fn hash_command(rendered_cmd: &str) -> String {
-  let digest = Sha256::digest(rendered_cmd.as_bytes());
-  let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+  use std::fmt::Write;
 
-  format!("sha256:{hex}")
+  let digest = Sha256::digest(rendered_cmd.as_bytes());
+  let mut hex = String::with_capacity(7 + 64);
+
+  hex.push_str("sha256:");
+
+  for b in digest.iter() {
+    write!(hex, "{b:02x}").unwrap();
+  }
+
+  hex
 }
 
 /// Load the approvals file from disk, returning defaults on any error.

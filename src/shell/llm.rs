@@ -73,11 +73,26 @@ pub fn render_prompt(
 
   let mut data = std::collections::BTreeMap::<String, minijinja::value::Value>::new();
 
-  data.insert("jj_diff".into(), vars.jj_diff.clone().into());
-  data.insert("jj_diff_stat".into(), vars.jj_diff_stat.clone().into());
-  data.insert("branch".into(), vars.branch.clone().into());
-  data.insert("repo".into(), vars.repo.clone().into());
-  data.insert("recent_commits".into(), vars.recent_commits.clone().into());
+  data.insert(
+    "jj_diff".into(),
+    minijinja::value::Value::from(vars.jj_diff.as_str()),
+  );
+  data.insert(
+    "jj_diff_stat".into(),
+    minijinja::value::Value::from(vars.jj_diff_stat.as_str()),
+  );
+  data.insert(
+    "branch".into(),
+    minijinja::value::Value::from(vars.branch.as_str()),
+  );
+  data.insert(
+    "repo".into(),
+    minijinja::value::Value::from(vars.repo.as_str()),
+  );
+  data.insert(
+    "recent_commits".into(),
+    minijinja::value::Value::from(vars.recent_commits.as_str()),
+  );
 
   tmpl
     .render(data)

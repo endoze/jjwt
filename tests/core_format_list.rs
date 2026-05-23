@@ -1,7 +1,7 @@
 use insta::assert_snapshot;
 use jjwt::core::format::{
-  format_age, format_list_json, format_list_table, format_remove_json, format_switch_json,
-  render_status_glyphs,
+  format_age, format_dry_run, format_dry_run_json, format_list_json, format_list_table,
+  format_remove_json, format_switch_json, render_status_glyphs,
 };
 use jjwt::core::types::*;
 use std::path::PathBuf;
@@ -127,7 +127,7 @@ fn list_table_single_default_workspace() {
   r.commit = "5f1e03db".into();
   r.message = "fix(deps): bump".into();
 
-  let out = format_list_table(&[r], false, None);
+  let out = format_list_table(&[r], false, None, true);
 
   assert_snapshot!(out);
 }
@@ -181,7 +181,7 @@ fn list_table_default_plus_two_worktrees() {
   b.age = "1mo".into();
   b.message = "fix: unreachable".into();
 
-  let out = format_list_table(&[d, a, b], false, None);
+  let out = format_list_table(&[d, a, b], false, None, true);
 
   assert_snapshot!(out);
 }
@@ -192,7 +192,7 @@ fn list_table_footer_pluralization() {
   r.is_current = true;
   r.status.has_remote = true;
   r.status.vs_trunk = Some(TrunkRel::IsTrunk);
-  let out = format_list_table(&[r], false, None);
+  let out = format_list_table(&[r], false, None, true);
 
   assert!(out.ends_with("○ Showing 1 worktree\n"), "got: {out}");
 }
@@ -212,8 +212,8 @@ fn styled_mode_emits_ansi_and_preserves_alignment() {
     ahead: 2,
     behind: 1,
   };
-  let plain = format_list_table(&[d.clone()], false, None);
-  let styled = format_list_table(&[d], true, None);
+  let plain = format_list_table(&[d.clone()], false, None, true);
+  let styled = format_list_table(&[d], true, None, true);
 
   // Styled output must contain ANSI escapes.
   assert!(
@@ -257,7 +257,7 @@ fn list_table_footer_omits_zero_clauses() {
   // 2 worktrees, both clean, neither ahead -> footer is just "○ Showing 2 worktrees"
   let a = row("default");
   let b = row("alpha");
-  let out = format_list_table(&[a, b], false, None);
+  let out = format_list_table(&[a, b], false, None, true);
 
   assert!(
     out.ends_with("○ Showing 2 worktrees\n"),
@@ -322,7 +322,7 @@ fn narrow_terminal_drops_low_priority_columns() {
   let rows = rich_rows();
   // 80 columns is narrow — Message (priority 13) and Path (priority 7)
   // should be dropped before the higher-priority columns.
-  let out = format_list_table(&rows, false, Some(80));
+  let out = format_list_table(&rows, false, Some(80), true);
   let header = out.lines().next().unwrap();
 
   assert!(
@@ -343,7 +343,7 @@ fn narrow_terminal_drops_low_priority_columns() {
 fn very_narrow_terminal_keeps_essential_columns() {
   let rows = rich_rows();
   // At 40 columns, only the highest-priority columns survive.
-  let out = format_list_table(&rows, false, Some(40));
+  let out = format_list_table(&rows, false, Some(40), true);
   let header = out.lines().next().unwrap();
 
   assert!(
@@ -363,7 +363,7 @@ fn very_narrow_terminal_keeps_essential_columns() {
 #[test]
 fn wide_terminal_shows_all_columns() {
   let rows = rich_rows();
-  let out = format_list_table(&rows, false, Some(200));
+  let out = format_list_table(&rows, false, Some(200), true);
   let header = out.lines().next().unwrap();
 
   assert!(
@@ -387,7 +387,7 @@ fn message_truncated_with_ellipsis() {
   r.message = "a]".repeat(60); // 120 chars — will exceed Message max of 100
 
   // Give just enough width that Message is visible but capped.
-  let out = format_list_table(&[r], false, Some(140));
+  let out = format_list_table(&[r], false, Some(140), true);
 
   if out.contains("…") {
     // Message was truncated with ellipsis — correct.
@@ -419,7 +419,7 @@ fn right_alignment_for_diff_columns() {
     removed: 10,
   };
 
-  let out = format_list_table(&[r, r2], false, None);
+  let out = format_list_table(&[r, r2], false, None, true);
   let lines: Vec<&str> = out.lines().collect();
 
   // In the header, HEAD± should be present.
@@ -455,7 +455,7 @@ fn empty_penalty_drops_empty_columns_first() {
   // At a width where some columns must drop, URL (empty, priority 9+10=19)
   // should drop before Commit (populated, priority 11).
   // Use a tight width to force dropping.
-  let out = format_list_table(&[d, a], false, Some(65));
+  let out = format_list_table(&[d, a], false, Some(65), true);
   let header = out.lines().next().unwrap();
 
   if header.contains("Commit") {
@@ -489,7 +489,7 @@ fn compact_notation_signs_thresholds() {
     removed: 0,
   };
 
-  let out = format_list_table(&[r999, r1000, r10000], false, None);
+  let out = format_list_table(&[r999, r1000, r10000], false, None, true);
 
   assert!(out.contains("+999"), "999 should be literal:\n{out}");
   assert!(out.contains("+1K"), "1000 should compact to 1K:\n{out}");
@@ -523,7 +523,7 @@ fn compact_notation_arrows_thresholds() {
     behind: 0,
   };
 
-  let out = format_list_table(&[r99, r100, r1000, r10000], false, None);
+  let out = format_list_table(&[r99, r100, r1000, r10000], false, None, true);
 
   assert!(out.contains("↑99"), "99 should be literal:\n{out}");
   assert!(out.contains("↑1C"), "100 should compact to 1C:\n{out}");
@@ -534,8 +534,8 @@ fn compact_notation_arrows_thresholds() {
 #[test]
 fn styled_adaptive_preserves_alignment() {
   let rows = rich_rows();
-  let plain = format_list_table(&rows, false, Some(120));
-  let styled = format_list_table(&rows, true, Some(120));
+  let plain = format_list_table(&rows, false, Some(120), true);
+  let styled = format_list_table(&rows, true, Some(120), true);
   let stripped = strip_ansi(&styled);
 
   assert_eq!(
@@ -835,7 +835,7 @@ fn styled_head_diff_add_only() {
     removed: 0,
   };
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
 
   assert!(out.contains("\u{1b}["), "should contain ANSI escapes");
   // The plain form "+10" should appear somewhere in the stripped output.
@@ -852,7 +852,7 @@ fn styled_head_diff_remove_only() {
     removed: 5,
   };
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
 
   assert!(strip_ansi(&out).contains("-5"));
 }
@@ -867,7 +867,7 @@ fn styled_head_diff_both() {
     removed: 7,
   };
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
   let plain = strip_ansi(&out);
 
   assert!(plain.contains("+42"));
@@ -884,7 +884,7 @@ fn styled_ahead_behind_ahead_only() {
     behind: 0,
   };
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
 
   assert!(strip_ansi(&out).contains("↑3"));
 }
@@ -899,7 +899,7 @@ fn styled_ahead_behind_behind_only() {
     behind: 12,
   };
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
 
   assert!(strip_ansi(&out).contains("↓12"));
 }
@@ -914,7 +914,7 @@ fn styled_ahead_behind_both() {
     behind: 200,
   };
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
   let plain = strip_ansi(&out);
 
   assert!(plain.contains("↑5"));
@@ -928,7 +928,7 @@ fn styled_ci_status_pass() {
   r.is_current = true;
   r.ci_status = CiStatus::Pass;
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
 
   assert!(strip_ansi(&out).contains("✓"));
   assert!(out.contains("\u{1b}["));
@@ -941,7 +941,7 @@ fn styled_ci_status_fail() {
   r.is_current = true;
   r.ci_status = CiStatus::Fail;
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
 
   assert!(strip_ansi(&out).contains("✗"));
 }
@@ -953,7 +953,7 @@ fn styled_ci_status_pending() {
   r.is_current = true;
   r.ci_status = CiStatus::Pending;
 
-  let out = format_list_table(&[r], true, None);
+  let out = format_list_table(&[r], true, None, true);
 
   assert!(strip_ansi(&out).contains("◌"));
 }
@@ -979,7 +979,7 @@ fn bookmark_row_uses_slash_gutter_and_empty_path() {
     summary: String::new(),
   };
 
-  let out = format_list_table(&[bookmark], false, None);
+  let out = format_list_table(&[bookmark], false, None, true);
   let data_line = out.lines().nth(1).expect("should have data row");
 
   assert!(
@@ -994,7 +994,7 @@ fn default_non_current_uses_caret_gutter() {
 
   r.is_current = false;
 
-  let out = format_list_table(&[r], false, None);
+  let out = format_list_table(&[r], false, None, true);
   let data_line = out.lines().nth(1).expect("should have data row");
 
   assert!(
@@ -1015,7 +1015,7 @@ fn styled_truncation_preserves_ansi_correctness() {
   r.is_current = true;
   r.message = "a".repeat(120);
 
-  let out = format_list_table(&[r], true, Some(90));
+  let out = format_list_table(&[r], true, Some(90), true);
 
   // The output should contain an ellipsis from truncation.
   assert!(
@@ -1042,7 +1042,7 @@ fn very_tight_terminal_shrinks_bookmark_column() {
   r.status.has_changes = true;
 
   // At 20 columns, Bookmark must shrink to fit alongside Status.
-  let out = format_list_table(&[r], false, Some(20));
+  let out = format_list_table(&[r], false, Some(20), true);
   let header = out.lines().next().unwrap();
 
   assert!(
@@ -1073,4 +1073,335 @@ fn status_glyphs_trunk_rel_none_is_blank() {
   };
 
   assert_eq!(render_status_glyphs(&flags), "");
+}
+
+// ── Compact mode (full=false) column hiding tests ───────────────────
+
+#[test]
+fn compact_mode_hides_full_only_columns() {
+  let mut r = row("default");
+
+  r.is_current = true;
+  r.status.has_remote = true;
+  r.status.vs_trunk = Some(TrunkRel::IsTrunk);
+  r.url = "http://example.com".into();
+  r.commit = "5f1e03db".into();
+  r.age = "9h".into();
+  r.ci_status = CiStatus::Pass;
+  r.summary = "A summary".into();
+
+  let compact = format_list_table(&[r.clone()], false, None, false);
+  let full = format_list_table(&[r], false, None, true);
+  let compact_header = compact.lines().next().unwrap();
+  let full_header = full.lines().next().unwrap();
+
+  // Compact hides: CI, URL, Commit, Age, Summary
+  assert!(
+    !compact_header.contains("CI"),
+    "CI hidden in compact:\n{compact}"
+  );
+  assert!(
+    !compact_header.contains("URL"),
+    "URL hidden in compact:\n{compact}"
+  );
+  assert!(
+    !compact_header.contains("Commit"),
+    "Commit hidden in compact:\n{compact}"
+  );
+  assert!(
+    !compact_header.contains("Age"),
+    "Age hidden in compact:\n{compact}"
+  );
+  assert!(
+    !compact_header.contains("Summary"),
+    "Summary hidden in compact:\n{compact}"
+  );
+
+  // Compact keeps: Bookmark, Status, HEAD±, main↕, Path, Message
+  assert!(
+    compact_header.contains("Bookmark"),
+    "Bookmark shown in compact:\n{compact}"
+  );
+  assert!(
+    compact_header.contains("Status"),
+    "Status shown in compact:\n{compact}"
+  );
+  assert!(
+    compact_header.contains("Message"),
+    "Message shown in compact:\n{compact}"
+  );
+
+  // Full shows everything
+  assert!(full_header.contains("CI"), "CI shown in full:\n{full}");
+  assert!(full_header.contains("URL"), "URL shown in full:\n{full}");
+  assert!(
+    full_header.contains("Commit"),
+    "Commit shown in full:\n{full}"
+  );
+  assert!(full_header.contains("Age"), "Age shown in full:\n{full}");
+}
+
+#[test]
+fn compact_mode_with_terminal_width_also_hides_columns() {
+  let mut r = row("default");
+
+  r.is_current = true;
+  r.ci_status = CiStatus::Pass;
+  r.commit = "5f1e03db".into();
+
+  let compact = format_list_table(&[r], false, Some(200), false);
+  let header = compact.lines().next().unwrap();
+
+  assert!(
+    !header.contains("CI"),
+    "CI hidden in compact mode even at wide terminal:\n{compact}"
+  );
+  assert!(
+    !header.contains("Commit"),
+    "Commit hidden in compact mode:\n{compact}"
+  );
+}
+
+// ── format_dry_run tests ────────────────────────────────────────────
+
+#[test]
+fn dry_run_workspace_add() {
+  let actions = vec![Action::JjWorkspaceAdd {
+    name: "feat".into(),
+    path: PathBuf::from("/repo/.worktrees/feat"),
+  }];
+
+  let out = format_dry_run(&actions);
+
+  assert!(out.contains("would create workspace 'feat'"), "got: {out}");
+  assert!(out.contains("/repo/.worktrees/feat"), "got: {out}");
+}
+
+#[test]
+fn dry_run_bookmark_create() {
+  let actions = vec![Action::JjBookmarkCreate {
+    name: "feat".into(),
+    workspace: "feat".into(),
+  }];
+
+  let out = format_dry_run(&actions);
+
+  assert!(out.contains("would create bookmark 'feat'"), "got: {out}");
+}
+
+#[test]
+fn dry_run_workspace_forget_and_delete() {
+  let actions = vec![
+    Action::JjWorkspaceForget {
+      name: "feat".into(),
+    },
+    Action::DeleteDir {
+      path: PathBuf::from("/repo/.worktrees/feat"),
+    },
+    Action::JjBookmarkDelete {
+      name: "feat".into(),
+    },
+  ];
+
+  let out = format_dry_run(&actions);
+
+  assert!(out.contains("would forget workspace 'feat'"), "got: {out}");
+  assert!(
+    out.contains("would delete /repo/.worktrees/feat"),
+    "got: {out}"
+  );
+  assert!(out.contains("would delete bookmark 'feat'"), "got: {out}");
+}
+
+#[test]
+fn dry_run_skips_print_line() {
+  let actions = vec![
+    Action::JjWorkspaceForget {
+      name: "feat".into(),
+    },
+    Action::PrintLine("cd:/repo".into()),
+  ];
+
+  let out = format_dry_run(&actions);
+
+  assert!(
+    !out.contains("cd:/repo"),
+    "PrintLine should be skipped: {out}"
+  );
+  assert_eq!(out.lines().count(), 1);
+}
+
+#[test]
+fn dry_run_update_stale() {
+  let actions = vec![Action::JjWorkspaceUpdateStale {
+    name: "feat".into(),
+  }];
+
+  let out = format_dry_run(&actions);
+
+  assert!(
+    out.contains("would update stale workspace 'feat'"),
+    "got: {out}"
+  );
+}
+
+#[test]
+fn dry_run_delete_background() {
+  let actions = vec![Action::DeleteDirBackground {
+    path: PathBuf::from("/repo/.worktrees/feat"),
+  }];
+
+  let out = format_dry_run(&actions);
+
+  assert!(out.contains("(background)"), "got: {out}");
+}
+
+#[test]
+fn dry_run_rename_workspace_and_dir() {
+  let actions = vec![
+    Action::JjWorkspaceRename {
+      old_name: "old".into(),
+      new_name: "new".into(),
+    },
+    Action::RenameDir {
+      from: PathBuf::from("/repo/.worktrees/old"),
+      to: PathBuf::from("/repo/.worktrees/new"),
+    },
+    Action::JjBookmarkRename {
+      old_name: "old".into(),
+      new_name: "new".into(),
+    },
+  ];
+
+  let out = format_dry_run(&actions);
+
+  assert!(out.contains("would rename workspace 'old'"), "got: {out}");
+  assert!(out.contains("would move"), "got: {out}");
+  assert!(out.contains("would rename bookmark 'old'"), "got: {out}");
+}
+
+#[test]
+fn dry_run_hook_and_exec() {
+  let actions = vec![
+    Action::RunHook {
+      name: "setup".into(),
+      rendered_cmd: "npm install".into(),
+      cwd: PathBuf::from("/repo"),
+      env: vec![],
+      source: HookSource::Project,
+    },
+    Action::Exec {
+      rendered_cmd: "echo hello".into(),
+      cwd: PathBuf::from("/repo"),
+      env: vec![],
+    },
+  ];
+
+  let out = format_dry_run(&actions);
+
+  assert!(
+    out.contains("would run hook 'setup': npm install"),
+    "got: {out}"
+  );
+  assert!(out.contains("would exec: echo hello"), "got: {out}");
+}
+
+#[test]
+fn dry_run_empty_actions() {
+  let out = format_dry_run(&[]);
+
+  assert_eq!(out, "");
+}
+
+// ── format_dry_run_json tests ───────────────────────────────────────
+
+#[test]
+fn dry_run_json_workspace_add() {
+  let actions = vec![Action::JjWorkspaceAdd {
+    name: "feat".into(),
+    path: PathBuf::from("/repo/.worktrees/feat"),
+  }];
+
+  let out = format_dry_run_json(&actions);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed.len(), 1);
+  assert_eq!(parsed[0]["type"], "workspace_add");
+  assert_eq!(parsed[0]["name"], "feat");
+  assert_eq!(parsed[0]["path"], "/repo/.worktrees/feat");
+}
+
+#[test]
+fn dry_run_json_skips_print_line() {
+  let actions = vec![
+    Action::JjWorkspaceForget {
+      name: "feat".into(),
+    },
+    Action::PrintLine("ignored".into()),
+  ];
+
+  let out = format_dry_run_json(&actions);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed.len(), 1);
+  assert_eq!(parsed[0]["type"], "workspace_forget");
+}
+
+#[test]
+fn dry_run_json_multiple_action_types() {
+  let actions = vec![
+    Action::JjBookmarkCreate {
+      name: "feat".into(),
+      workspace: "feat".into(),
+    },
+    Action::JjBookmarkDelete { name: "old".into() },
+    Action::JjWorkspaceUpdateStale {
+      name: "stale-ws".into(),
+    },
+    Action::DeleteDir {
+      path: PathBuf::from("/tmp/dir"),
+    },
+    Action::DeleteDirBackground {
+      path: PathBuf::from("/tmp/bg"),
+    },
+    Action::JjWorkspaceRename {
+      old_name: "a".into(),
+      new_name: "b".into(),
+    },
+    Action::RenameDir {
+      from: PathBuf::from("/a"),
+      to: PathBuf::from("/b"),
+    },
+    Action::JjBookmarkRename {
+      old_name: "x".into(),
+      new_name: "y".into(),
+    },
+    Action::RunHook {
+      name: "setup".into(),
+      rendered_cmd: "npm i".into(),
+      cwd: PathBuf::from("/repo"),
+      env: vec![],
+      source: HookSource::Project,
+    },
+    Action::Exec {
+      rendered_cmd: "echo hi".into(),
+      cwd: PathBuf::from("/repo"),
+      env: vec![],
+    },
+  ];
+
+  let out = format_dry_run_json(&actions);
+  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
+
+  assert_eq!(parsed.len(), 10);
+  assert_eq!(parsed[0]["type"], "bookmark_create");
+  assert_eq!(parsed[1]["type"], "bookmark_delete");
+  assert_eq!(parsed[2]["type"], "workspace_update_stale");
+  assert_eq!(parsed[3]["type"], "delete_dir");
+  assert_eq!(parsed[4]["type"], "delete_dir_background");
+  assert_eq!(parsed[5]["type"], "workspace_rename");
+  assert_eq!(parsed[6]["type"], "rename_dir");
+  assert_eq!(parsed[7]["type"], "bookmark_rename");
+  assert_eq!(parsed[8]["type"], "run_hook");
+  assert_eq!(parsed[9]["type"], "exec");
 }

@@ -39,6 +39,7 @@ fn obs_with_workspaces() -> ObservedListState {
     current_workspace: Some("default".into()),
     extra_bookmark_names: Vec::new(),
     extra_remote_only_names: Vec::new(),
+    full: true,
     rows: vec![
       ObservedListRow {
         workspace: Workspace {
@@ -296,4 +297,45 @@ fn list_json_with_extra_bookmark_rows() {
   assert_eq!(parsed.len(), 3);
   assert_eq!(parsed[2]["name"], "orphan-branch");
   assert_eq!(parsed[2]["kind"], "bookmark");
+}
+
+#[test]
+fn list_compact_mode_hides_url_column() {
+  let mut obs = obs_with_workspaces();
+
+  obs.full = false;
+
+  let plan = plan_list(&cfg_with_list(), &obs, &DISPLAY, OutputFormat::Text).expect("plan ok");
+
+  let Action::PrintLine(out) = &plan.actions[0] else {
+    panic!()
+  };
+
+  // In compact mode, URL column should be hidden even though cfg has a URL template.
+  assert!(
+    !out.contains("http://example.com/default"),
+    "URL should be hidden in compact mode:\n{out}"
+  );
+  assert!(
+    out.contains("default"),
+    "workspace names still shown:\n{out}"
+  );
+}
+
+#[test]
+fn list_full_mode_shows_url_column() {
+  let mut obs = obs_with_workspaces();
+
+  obs.full = true;
+
+  let plan = plan_list(&cfg_with_list(), &obs, &DISPLAY, OutputFormat::Text).expect("plan ok");
+
+  let Action::PrintLine(out) = &plan.actions[0] else {
+    panic!()
+  };
+
+  assert!(
+    out.contains("http://example.com/default"),
+    "URL should be shown in full mode:\n{out}"
+  );
 }

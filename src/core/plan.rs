@@ -126,114 +126,132 @@ pub fn plan_switch(
     return Err(CoreError::NotJjRepo);
   }
 
-  let mut plan = Plan::new();
-
   if args.create {
-    if obs.workspaces.iter().any(|w| w.name == args.name) {
-      return Err(CoreError::WorkspaceExists(args.name.clone()));
-    }
+    plan_switch_create(cfg, args, obs)
+  } else {
+    plan_switch_existing(cfg, args, obs)
+  }
+}
 
-    let ws_path = workspace_path(
-      &obs.repo_root,
-      &args.name,
-      cfg.worktree_path_template.as_deref(),
-    )?;
-
-    // Stale directory at the target — usually leftover from an
-    // interrupted `jj workspace add`. Require `--clobber` to consent to
-    // removing it, and never clobber when the path is inside an existing
-    // workspace (that would torch real user data).
-    if obs.target_path_exists {
-      if !args.clobber {
-        return Err(CoreError::TargetPathOccupied(ws_path.display().to_string()));
-      }
-
-      let inside_other = obs
-        .workspaces
-        .iter()
-        .any(|w| ws_path != w.path && ws_path.starts_with(&w.path));
-
-      if inside_other {
-        return Err(CoreError::TargetPathInsideOtherWorkspace(
-          ws_path.display().to_string(),
-        ));
-      }
-
-      plan.push(Action::DeleteDir {
-        path: ws_path.clone(),
-      });
-    }
-
-    // `pre-switch` fires before the workspace exists; it runs in the
-    // repo root so the user still has a cwd to operate from.
-    for a in render_hook_group_if(
-      !args.no_hooks,
-      &cfg.pre_switch,
-      "pre-switch",
-      &args.name,
-      &ws_path,
-      &obs.repo_root,
-    )? {
-      plan.push(a);
-    }
-
-    plan.push(Action::JjWorkspaceAdd {
-      name: args.name.clone(),
-      path: ws_path.clone(),
-    });
-    plan.push(Action::JjBookmarkCreate {
-      name: args.name.clone(),
-      workspace: args.name.clone(),
-    });
-
-    for a in render_hook_group_if(
-      !args.no_hooks,
-      &cfg.pre_start,
-      "pre-start",
-      &args.name,
-      &ws_path,
-      &obs.repo_root,
-    )? {
-      plan.push(a);
-    }
-
-    for a in render_hook_group_if(
-      !args.no_hooks,
-      &cfg.post_start,
-      "post-start",
-      &args.name,
-      &ws_path,
-      &obs.repo_root,
-    )? {
-      plan.push(a);
-    }
-
-    emit_switch_output(
-      &mut plan,
-      &args.name,
-      &ws_path,
-      &obs.repo_root,
-      args.execute.as_deref(),
-      args.format,
-      true,
-    )?;
-
-    for a in render_hook_group_if(
-      !args.no_hooks,
-      &cfg.post_switch,
-      "post-switch",
-      &args.name,
-      &ws_path,
-      &obs.repo_root,
-    )? {
-      plan.push(a);
-    }
-
-    return Ok(plan);
+/// Create a new workspace and switch to it.
+fn plan_switch_create(
+  cfg: &MergedConfig,
+  args: &SwitchArgs,
+  obs: &ObservedState,
+) -> Result<Plan, CoreError> {
+  if obs.workspaces.iter().any(|w| w.name == args.name) {
+    return Err(CoreError::WorkspaceExists(args.name.clone()));
   }
 
-  // Non-create: prefer a direct workspace match; otherwise honor the
-  // trunk-bookmark fallback (e.g. `switch main` -> default workspace).
+  let ws_path = workspace_path(
+    &obs.repo_root,
+    &args.name,
+    cfg.worktree_path_template.as_deref(),
+  )?;
+
+  let mut plan = Plan::new();
+
+  // Stale directory at the target — usually leftover from an
+  // interrupted `jj workspace add`. Require `--clobber` to consent to
+  // removing it, and never clobber when the path is inside an existing
+  // workspace (that would torch real user data).
+  if obs.target_path_exists {
+    if !args.clobber {
+      return Err(CoreError::TargetPathOccupied(ws_path.display().to_string()));
+    }
+
+    let inside_other = obs
+      .workspaces
+      .iter()
+      .any(|w| ws_path != w.path && ws_path.starts_with(&w.path));
+
+    if inside_other {
+      return Err(CoreError::TargetPathInsideOtherWorkspace(
+        ws_path.display().to_string(),
+      ));
+    }
+
+    plan.push(Action::DeleteDir {
+      path: ws_path.clone(),
+    });
+  }
+
+  // `pre-switch` fires before the workspace exists; it runs in the
+  // repo root so the user still has a cwd to operate from.
+  for a in render_hook_group_if(
+    !args.no_hooks,
+    &cfg.pre_switch,
+    "pre-switch",
+    &args.name,
+    &ws_path,
+    &obs.repo_root,
+  )? {
+    plan.push(a);
+  }
+
+  plan.push(Action::JjWorkspaceAdd {
+    name: args.name.clone(),
+    path: ws_path.clone(),
+  });
+  plan.push(Action::JjBookmarkCreate {
+    name: args.name.clone(),
+    workspace: args.name.clone(),
+  });
+
+  for a in render_hook_group_if(
+    !args.no_hooks,
+    &cfg.pre_start,
+    "pre-start",
+    &args.name,
+    &ws_path,
+    &obs.repo_root,
+  )? {
+    plan.push(a);
+  }
+
+  for a in render_hook_group_if(
+    !args.no_hooks,
+    &cfg.post_start,
+    "post-start",
+    &args.name,
+    &ws_path,
+    &obs.repo_root,
+  )? {
+    plan.push(a);
+  }
+
+  emit_switch_output(
+    &mut plan,
+    &args.name,
+    &ws_path,
+    &obs.repo_root,
+    args.execute.as_deref(),
+    args.format,
+    true,
+  )?;
+
+  for a in render_hook_group_if(
+    !args.no_hooks,
+    &cfg.post_switch,
+    "post-switch",
+    &args.name,
+    &ws_path,
+    &obs.repo_root,
+  )? {
+    plan.push(a);
+  }
+
+  Ok(plan)
+}
+
+/// Switch to an existing workspace, optionally re-running start hooks.
+fn plan_switch_existing(
+  cfg: &MergedConfig,
+  args: &SwitchArgs,
+  obs: &ObservedState,
+) -> Result<Plan, CoreError> {
+  // Prefer a direct workspace match; otherwise honor the trunk-bookmark
+  // fallback (e.g. `switch main` -> default workspace).
   let ws = obs
     .workspaces
     .iter()
@@ -245,6 +263,8 @@ pub fn plan_switch(
         .and_then(|n| obs.workspaces.iter().find(|w| w.name == n))
     })
     .ok_or_else(|| CoreError::WorkspaceMissing(args.name.clone()))?;
+
+  let mut plan = Plan::new();
 
   for a in render_hook_group_if(
     !args.no_hooks,
@@ -918,12 +938,135 @@ pub fn plan_list(
   let current = obs.current_workspace.as_deref();
 
   let body = match format {
-    OutputFormat::Text => format_list_table(&rows, display.styled, display.term_width),
+    OutputFormat::Text => format_list_table(&rows, display.styled, display.term_width, obs.full),
     OutputFormat::Json => format_list_json(&rows),
     OutputFormat::Statusline => crate::core::format::format_statusline(&rows, current),
   };
 
   plan.push(Action::PrintLine(body));
+
+  Ok(plan)
+}
+
+/// Render a hook template using the current workspace context, returning
+/// `None` when no observed state is available.
+fn render_hook_template(obs: Option<&ObservedState>, tmpl: &str) -> Option<String> {
+  obs.map(|obs| {
+    let (branch, ws_path) = current_workspace_or_root(obs);
+    let ctx = render_ctx(&branch, &ws_path, &obs.repo_root, "", "");
+
+    match render(tmpl, &ctx) {
+      Ok(rendered) => rendered,
+      Err(e) => format!("<error: {e}>"),
+    }
+  })
+}
+
+/// Render the hook entries as a JSON array and push the result onto `plan`.
+fn plan_hook_show_json(
+  entries: &[(&str, &str, &str, HookSource)],
+  expanded: bool,
+  obs: Option<&ObservedState>,
+) -> Result<Plan, CoreError> {
+  let mut plan = Plan::new();
+
+  let items: Vec<serde_json::Value> = entries
+    .iter()
+    .map(|(hook_type, name, tmpl, source)| {
+      let mut obj = serde_json::Map::new();
+
+      obj.insert(
+        "type".into(),
+        serde_json::Value::String(hook_type.to_string()),
+      );
+      obj.insert("name".into(), serde_json::Value::String(name.to_string()));
+      obj.insert(
+        "source".into(),
+        serde_json::Value::String(source.to_string()),
+      );
+      obj.insert(
+        "template".into(),
+        serde_json::Value::String(tmpl.to_string()),
+      );
+
+      if expanded && let Some(rendered) = render_hook_template(obs, tmpl) {
+        obj.insert("rendered".into(), serde_json::Value::String(rendered));
+      }
+
+      serde_json::Value::Object(obj)
+    })
+    .collect();
+
+  plan.push(Action::PrintLine(
+    serde_json::to_string(&items).expect("json"),
+  ));
+
+  Ok(plan)
+}
+
+/// Render the hook entries as a human-readable text table and push the result
+/// onto `plan`.
+fn plan_hook_show_text(
+  entries: &[(&str, &str, &str, HookSource)],
+  expanded: bool,
+  obs: Option<&ObservedState>,
+) -> Result<Plan, CoreError> {
+  let mut plan = Plan::new();
+  let mut lines = Vec::new();
+
+  // Compute column widths.
+  let type_w = entries
+    .iter()
+    .map(|(t, _, _, _)| t.len())
+    .max()
+    .unwrap_or(4)
+    .max(4);
+  let name_w = entries
+    .iter()
+    .map(|(_, n, _, _)| n.len())
+    .max()
+    .unwrap_or(4)
+    .max(4);
+  let source_w = entries
+    .iter()
+    .map(|(_, _, _, s)| s.to_string().len())
+    .max()
+    .unwrap_or(6)
+    .max(6);
+
+  // Header.
+  let last_col = if expanded { "Rendered" } else { "Template" };
+
+  lines.push(format!(
+    "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
+    "Type", "Name", "Source", last_col,
+  ));
+
+  // Separator.
+  lines.push(format!(
+    "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
+    "-".repeat(type_w),
+    "-".repeat(name_w),
+    "-".repeat(source_w),
+    "-".repeat(8),
+  ));
+
+  for (hook_type, name, tmpl, source) in entries {
+    let display_val = if expanded {
+      render_hook_template(obs, tmpl)
+        .map(|r| truncate_line(&r, 60))
+        .unwrap_or_else(|| tmpl.to_string())
+    } else {
+      truncate_line(tmpl, 60)
+    };
+
+    lines.push(format!(
+      "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
+      hook_type, name, source, display_val,
+    ));
+  }
+
+  plan.push(Action::PrintLine(lines.join("\n")));
 
   Ok(plan)
 }
@@ -936,8 +1079,6 @@ pub fn plan_hook_show(
   format: OutputFormat,
   source_filter: Option<HookSource>,
 ) -> Result<Plan, CoreError> {
-  let mut plan = Plan::new();
-
   // Gather all hooks across all types, applying source filter if set.
   let mut entries: Vec<(&str, &str, &str, HookSource)> = Vec::new();
 
@@ -956,153 +1097,39 @@ pub fn plan_hook_show(
   }
 
   if entries.is_empty() {
+    let mut plan = Plan::new();
+
     plan.push(Action::PrintLine("No hooks configured.".into()));
 
     return Ok(plan);
   }
 
   match format {
-    OutputFormat::Json => {
-      let items: Vec<serde_json::Value> = entries
-        .iter()
-        .map(|(hook_type, name, tmpl, source)| {
-          let mut obj = serde_json::Map::new();
-
-          obj.insert(
-            "type".into(),
-            serde_json::Value::String(hook_type.to_string()),
-          );
-          obj.insert("name".into(), serde_json::Value::String(name.to_string()));
-          obj.insert(
-            "source".into(),
-            serde_json::Value::String(source.to_string()),
-          );
-          obj.insert(
-            "template".into(),
-            serde_json::Value::String(tmpl.to_string()),
-          );
-
-          if expanded && let Some(obs) = obs {
-            let (branch, ws_path) = current_workspace_or_root(obs);
-            let ctx = render_ctx(&branch, &ws_path, &obs.repo_root, hook_type, name);
-
-            match render(tmpl, &ctx) {
-              Ok(rendered) => {
-                obj.insert("rendered".into(), serde_json::Value::String(rendered));
-              }
-              Err(e) => {
-                obj.insert(
-                  "rendered".into(),
-                  serde_json::Value::String(format!("<error: {e}>")),
-                );
-              }
-            }
-          }
-
-          serde_json::Value::Object(obj)
-        })
-        .collect();
-
-      plan.push(Action::PrintLine(
-        serde_json::to_string(&items).expect("json"),
-      ));
-    }
-    OutputFormat::Text => {
-      let mut lines = Vec::new();
-
-      // Compute column widths.
-      let type_w = entries
-        .iter()
-        .map(|(t, _, _, _)| t.len())
-        .max()
-        .unwrap_or(4)
-        .max(4);
-      let name_w = entries
-        .iter()
-        .map(|(_, n, _, _)| n.len())
-        .max()
-        .unwrap_or(4)
-        .max(4);
-      let source_w = entries
-        .iter()
-        .map(|(_, _, _, s)| s.to_string().len())
-        .max()
-        .unwrap_or(6)
-        .max(6);
-
-      // Header.
-      if expanded {
-        lines.push(format!(
-          "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
-          "Type", "Name", "Source", "Rendered",
-        ));
-      } else {
-        lines.push(format!(
-          "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
-          "Type", "Name", "Source", "Template",
-        ));
-      }
-
-      // Separator.
-      lines.push(format!(
-        "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
-        "-".repeat(type_w),
-        "-".repeat(name_w),
-        "-".repeat(source_w),
-        "-".repeat(8),
-      ));
-
-      for (hook_type, name, tmpl, source) in &entries {
-        let display_val = if expanded {
-          if let Some(obs) = obs {
-            let (branch, ws_path) = current_workspace_or_root(obs);
-            let ctx = render_ctx(&branch, &ws_path, &obs.repo_root, hook_type, name);
-
-            match render(tmpl, &ctx) {
-              Ok(rendered) => truncate_line(&rendered, 60),
-              Err(e) => format!("<error: {e}>"),
-            }
-          } else {
-            tmpl.to_string()
-          }
-        } else {
-          truncate_line(tmpl, 60)
-        };
-
-        lines.push(format!(
-          "{:<type_w$}  {:<name_w$}  {:<source_w$}  {}",
-          hook_type, name, source, display_val,
-        ));
-      }
-
-      plan.push(Action::PrintLine(lines.join("\n")));
-    }
+    OutputFormat::Json => plan_hook_show_json(&entries, expanded, obs),
+    OutputFormat::Text => plan_hook_show_text(&entries, expanded, obs),
     OutputFormat::Statusline => {
+      let mut plan = Plan::new();
+
       // Statusline not meaningful for hook show; fall back to text count.
       plan.push(Action::PrintLine(format!(
         "{} hook(s) configured",
         entries.len()
       )));
+
+      Ok(plan)
     }
   }
-
-  Ok(plan)
 }
 
 /// Extract current workspace branch + path from observation, falling back to
 /// repo root when not inside a workspace.
 fn current_workspace_or_root(obs: &ObservedState) -> (String, PathBuf) {
-  match obs.current_workspace.as_deref() {
-    Some(name) => {
-      let ws = obs.workspaces.iter().find(|w| w.name == name);
-
-      match ws {
-        Some(w) => (w.name.clone(), w.path.clone()),
-        None => (String::new(), obs.repo_root.clone()),
-      }
-    }
-    None => (String::new(), obs.repo_root.clone()),
-  }
+  obs
+    .current_workspace
+    .as_deref()
+    .and_then(|name| obs.workspaces.iter().find(|w| w.name == name))
+    .map(|w| (w.name.clone(), w.path.clone()))
+    .unwrap_or_else(|| (String::new(), obs.repo_root.clone()))
 }
 
 /// Truncate a string to `max` characters, appending `...` if shortened.

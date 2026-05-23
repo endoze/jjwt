@@ -63,13 +63,13 @@ This creates a `wt` shell function that wraps `jjwt` so that `wt switch` can `cd
 
 ```sh
 # Fish
-jjwt config completions fish > ~/.config/fish/completions/jjwt.fish
+jjwt config shell completions fish > ~/.config/fish/completions/jjwt.fish
 
 # Bash (add to ~/.bashrc)
-eval "$(jjwt config completions bash)"
+eval "$(jjwt config shell completions bash)"
 
 # Zsh (add to ~/.zshrc, before compinit)
-jjwt config completions zsh > "${fpath[1]}/_jjwt"
+jjwt config shell completions zsh > "${fpath[1]}/_jjwt"
 ```
 
 ## Quick start
@@ -169,6 +169,7 @@ jjwt config create --project    # scaffold .config/wt.toml
 jjwt config create --user       # scaffold ~/.config/jjwt/config.toml
 jjwt config show                # display resolved config (both layers)
 jjwt config shell init fish     # emit shell wrapper function
+jjwt config shell completions <shell> # emit shell completion script
 ```
 
 ### `step` utilities
