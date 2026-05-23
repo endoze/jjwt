@@ -1,9 +1,15 @@
 /// User-defined alias execution.
 pub mod alias;
+/// List workspace names for shell completion.
+pub mod complete;
+/// Validate configuration files and report issues.
+pub mod config_check;
 /// Scaffold a new config file (project or user).
 pub mod config_create;
 /// Display resolved config layers.
 pub mod config_show;
+/// Check environment and configuration health.
+pub mod doctor;
 /// Run a named hook in the current workspace.
 pub mod hook;
 /// Display configured hooks and their expansions.

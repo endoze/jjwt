@@ -4,7 +4,8 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::core::types::{
-  CiStatus, ObservedListRow, ObservedListState, ObservedState, WorkspaceDetails,
+  CiStatus, ListOptions, ObservedListRow, ObservedListState, ObservedState, Workspace,
+  WorkspaceDetails,
 };
 use crate::shell::fs::Fs;
 use crate::shell::jj::Jj;
@@ -157,6 +158,36 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
   let commit_infos = commit_result?;
   let ahead_behinds = ahead_behind_result?;
 
+  let rows = build_list_rows(
+    &workspaces,
+    &commit_infos,
+    &ahead_behinds,
+    &status_results,
+    &remote_set,
+  );
+
+  let (extra_bookmark_names, extra_remote_only_names) =
+    collect_extra_bookmarks(&opts, &all_local, &remote_set, &workspaces);
+
+  Ok(ObservedListState {
+    repo_root,
+    is_jj_repo: true,
+    current_workspace,
+    rows,
+    extra_bookmark_names,
+    extra_remote_only_names,
+    full: opts.full,
+  })
+}
+
+/// Build one `ObservedListRow` per workspace from the parallel query results.
+fn build_list_rows(
+  workspaces: &[Workspace],
+  commit_infos: &std::collections::HashMap<String, crate::core::types::CommitInfo>,
+  ahead_behinds: &std::collections::HashMap<String, (u32, u32)>,
+  status_results: &[(String, Result<(bool, bool)>)],
+  remote_set: &std::collections::HashSet<String>,
+) -> Vec<ObservedListRow> {
   let mut rows = Vec::with_capacity(workspaces.len());
 
   for (i, w) in workspaces.iter().enumerate() {
@@ -188,8 +219,20 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
     });
   }
 
+  rows
+}
+
+/// Collect extra bookmark and remote-only names that don't correspond to any
+/// workspace. Returns `(extra_bookmark_names, extra_remote_only_names)`.
+fn collect_extra_bookmarks(
+  opts: &ListOptions,
+  all_local: &[String],
+  remote_set: &std::collections::HashSet<String>,
+  workspaces: &[Workspace],
+) -> (Vec<String>, Vec<String>) {
   let ws_name_set: std::collections::HashSet<&str> =
     workspaces.iter().map(|w| w.name.as_str()).collect();
+
   let extra_bookmark_names = if opts.include_bookmarks {
     all_local
       .iter()
@@ -199,6 +242,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
   } else {
     Vec::new()
   };
+
   let extra_remote_only_names = if opts.include_remotes {
     let local_set: std::collections::HashSet<&str> = all_local.iter().map(|s| s.as_str()).collect();
 
@@ -211,14 +255,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
     Vec::new()
   };
 
-  Ok(ObservedListState {
-    repo_root,
-    is_jj_repo: true,
-    current_workspace,
-    rows,
-    extra_bookmark_names,
-    extra_remote_only_names,
-  })
+  (extra_bookmark_names, extra_remote_only_names)
 }
 
 /// Gather workspace states needed for the `prune` command.
@@ -297,7 +334,7 @@ fn pick_current_workspace(
     if cwd.starts_with(&ws_canon) {
       let depth = ws_canon.components().count();
 
-      if best.as_ref().map(|(d, _)| depth > *d).unwrap_or(true) {
+      if best.as_ref().is_none_or(|(d, _)| depth > *d) {
         best = Some((depth, w.name.clone()));
       }
     }

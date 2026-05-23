@@ -3,6 +3,7 @@
 use anyhow::{Result, bail};
 use std::path::Path;
 
+use crate::core::format::{format_dry_run, format_dry_run_json};
 use crate::core::plan::plan_switch;
 use crate::core::types::{OutputFormat, SwitchArgs};
 use crate::shell::config_loader::load_merged_config;
@@ -93,65 +94,80 @@ fn resolve_shortcut<J: Jj, F: crate::shell::fs::Fs>(
   jj: &J,
   fs: &F,
 ) -> Result<(String, Option<String>)> {
-  match name {
+  let probe = observe(jj, fs, cwd, None, None)?;
+  let cur = probe.current_workspace;
+
+  let resolved = match name {
     "^" => {
       let repo_root = jj.repo_root(cwd)?;
-      let trunk = jj
-        .trunk_bookmark(&repo_root)?
-        .ok_or_else(|| anyhow::anyhow!("`^` requires a trunk bookmark; none found"))?;
-      let probe = observe(jj, fs, cwd, Some(&trunk), None)?;
-      let cur = probe.current_workspace.clone();
 
-      Ok((trunk, cur))
+      jj.trunk_bookmark(&repo_root)?
+        .ok_or_else(|| anyhow::anyhow!("`^` requires a trunk bookmark; none found"))?
     }
-    "@" => {
-      let probe = observe(jj, fs, cwd, None, None)?;
-      let cur = probe.current_workspace.clone();
-      let n = cur
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("`@` requires being inside a known workspace"))?;
-
-      Ok((n, cur))
-    }
+    "@" => cur
+      .as_ref()
+      .ok_or_else(|| anyhow::anyhow!("`@` requires being inside a known workspace"))?
+      .clone(),
     "-" => {
       let repo_root = jj.repo_root(cwd)?;
       let st = load_state(&repo_root);
-      let prev = st
-        .previous_workspace
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("no previous workspace recorded yet"))?;
-      let probe = observe(jj, fs, cwd, Some(&prev), None)?;
-      let cur = probe.current_workspace.clone();
 
-      Ok((prev, cur))
+      st.previous_workspace
+        .ok_or_else(|| anyhow::anyhow!("no previous workspace recorded yet"))?
     }
     name if name.starts_with("pr:") => {
       let n: u32 = name[3..]
         .parse()
         .map_err(|_| anyhow::anyhow!("invalid PR number: {}", &name[3..]))?;
-      let branch = resolve_pr(n, cwd)?;
-      let probe = observe(jj, fs, cwd, None, None)?;
-      let cur = probe.current_workspace.clone();
 
-      Ok((branch, cur))
+      resolve_pr(n, cwd)?
     }
     name if name.starts_with("mr:") => {
       let n: u32 = name[3..]
         .parse()
         .map_err(|_| anyhow::anyhow!("invalid MR number: {}", &name[3..]))?;
-      let branch = resolve_mr(n, cwd)?;
-      let probe = observe(jj, fs, cwd, None, None)?;
-      let cur = probe.current_workspace.clone();
 
-      Ok((branch, cur))
+      resolve_mr(n, cwd)?
     }
-    _ => {
-      let probe = observe(jj, fs, cwd, None, None)?;
-      let cur = probe.current_workspace.clone();
+    _ => name.to_string(),
+  };
 
-      Ok((name.to_string(), cur))
-    }
+  Ok((resolved, cur))
+}
+
+/// Determine whether a workspace should be auto-created.
+///
+/// Returns `Ok(true)` when the workspace does not yet exist **and** either
+/// the name matches a known bookmark or originated from a `pr:`/`mr:`
+/// shortcut. Returns `Ok(false)` when the workspace already exists.
+fn should_auto_create<J: Jj, F: crate::shell::fs::Fs>(
+  jj: &J,
+  fs: &F,
+  cwd: &Path,
+  resolved_name: &str,
+  original_name: &str,
+) -> Result<bool> {
+  let probe = observe(jj, fs, cwd, Some(resolved_name), None)?;
+  let ws_exists = probe.workspaces.iter().any(|w| w.name == resolved_name);
+
+  if ws_exists {
+    return Ok(false);
   }
+
+  let repo_root = jj.repo_root(cwd)?;
+
+  // pr:/mr: always need a fetch to pull the remote branch.
+  if original_name.starts_with("pr:") || original_name.starts_with("mr:") {
+    let _ = jj.git_fetch(&repo_root);
+  }
+
+  // Auto-create if a bookmark with this name already exists (local
+  // or remote). This covers checking out an existing branch without
+  // requiring --create. For truly new branches (no bookmark), the
+  // user must pass --create explicitly.
+  let bookmark_known = jj.bookmark_exists(&repo_root, resolved_name)?;
+
+  Ok(bookmark_known || original_name.starts_with("pr:") || original_name.starts_with("mr:"))
 }
 
 /// Execute the `switch` command: resolve the target, plan, and run.
@@ -165,6 +181,7 @@ pub fn run(
   no_hooks: bool,
   execute: Option<String>,
   clobber: bool,
+  dry_run: bool,
   format: OutputFormat,
 ) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)?;
@@ -190,39 +207,7 @@ pub fn run(
 
   let (resolved_name, current_before) = resolve_shortcut(&name, cwd, &jj, &fs)?;
 
-  // Auto-create when the workspace doesn't exist but a bookmark does.
-  // For pr:/mr: shortcuts, also fetch first so the bookmark appears locally.
-  let create = if !create {
-    let probe = observe(
-      &jj,
-      &fs,
-      cwd,
-      Some(&resolved_name),
-      cfg.worktree_path_template.as_deref(),
-    )?;
-    let ws_exists = probe.workspaces.iter().any(|w| w.name == resolved_name);
-
-    if !ws_exists {
-      let repo_root = jj.repo_root(cwd)?;
-
-      // pr:/mr: always need a fetch to pull the remote branch.
-      if name.starts_with("pr:") || name.starts_with("mr:") {
-        let _ = jj.git_fetch(&repo_root);
-      }
-
-      // Auto-create if a bookmark with this name already exists (local
-      // or remote). This covers checking out an existing branch without
-      // requiring --create. For truly new branches (no bookmark), the
-      // user must pass --create explicitly.
-      let bookmark_known = jj.bookmark_exists(&repo_root, &resolved_name)?;
-
-      bookmark_known || name.starts_with("pr:") || name.starts_with("mr:")
-    } else {
-      false
-    }
-  } else {
-    create
-  };
+  let create = create || should_auto_create(&jj, &fs, cwd, &resolved_name, &name)?;
 
   let obs = observe(
     &jj,
@@ -241,6 +226,18 @@ pub fn run(
     format,
   };
   let plan = plan_switch(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+  if dry_run {
+    let output = match format {
+      OutputFormat::Json => format_dry_run_json(&plan.actions),
+      _ => format_dry_run(&plan.actions),
+    };
+
+    println!("{output}");
+
+    return Ok(());
+  }
+
   let repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
   let mut rt = Runtime::new(jj, fs, proc)
     .with_root(obs.repo_root.clone())

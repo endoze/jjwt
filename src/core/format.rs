@@ -1,5 +1,5 @@
 use crate::core::types::{
-  AheadBehind, CiStatus, LineDiff, ListRow, ListRowKind, StatusFlags, TrunkRel,
+  Action, AheadBehind, CiStatus, LineDiff, ListRow, ListRowKind, StatusFlags, TrunkRel,
 };
 use anstyle::{AnsiColor, Color, Style};
 use serde_json::{Map, Value, json};
@@ -234,7 +234,8 @@ fn truncate_cell(cell: &Cell, max_width: usize) -> Cell {
     if c == '\u{1b}' && chars.peek() == Some(&'[') {
       // Copy the entire escape sequence through.
       new_display.push(c);
-      new_display.push(chars.next().unwrap()); // '['
+      // SAFETY: peek() confirmed '[' is the next character.
+      new_display.push(chars.next().unwrap());
 
       for esc_c in chars.by_ref() {
         new_display.push(esc_c);
@@ -267,9 +268,14 @@ fn truncate_cell(cell: &Cell, max_width: usize) -> Cell {
 /// When `styled` is true, output is decorated with ANSI escape sequences.
 /// When `term_width` is `Some`, columns are adaptively dropped, shrunk,
 /// and truncated to fit the terminal.
-pub fn format_list_table(rows: &[ListRow], styled: bool, term_width: Option<u16>) -> String {
+pub fn format_list_table(
+  rows: &[ListRow],
+  styled: bool,
+  term_width: Option<u16>,
+  full: bool,
+) -> String {
   let mut cells = build_cells(rows, styled);
-  let (widths, visible) = compute_widths(&cells, term_width);
+  let (widths, visible) = compute_widths(&cells, term_width, full);
 
   // Truncate cells in truncatable columns that exceed their allocated width.
   for row_cells in &mut cells {
@@ -392,56 +398,29 @@ fn text_cell(s: &str, style: Option<Style>) -> Cell {
   }
 }
 
-/// Compute column widths and a visibility mask. When `term_width` is
-/// `None`, every column gets its ideal (natural) width. When `Some`,
-/// columns are dropped by priority, shrunk, and capped to fit.
-fn compute_widths(cells: &[[Cell; 11]], term_width: Option<u16>) -> ([usize; 11], [bool; 11]) {
-  // Phase 1: compute ideal (natural) widths — max of header and all cells.
-  let mut ideal = [0usize; 11];
+/// Column indices that are only shown when `--full` is active.
+const FULL_ONLY_COLS: [usize; 5] = [4, 6, 7, 8, 10]; // CI, URL, Commit, Age, Summary
 
-  for (i, h) in HEADERS.iter().enumerate() {
-    ideal[i] = h.width();
-  }
-
-  for row in cells {
-    for (i, cell) in row.iter().enumerate() {
-      let w = cell.width();
-
-      if w > ideal[i] {
-        ideal[i] = w;
-      }
-    }
-  }
-
-  let term_width = match term_width {
-    Some(w) => w as usize,
-    None => return (ideal, [true; 11]),
-  };
-
-  // Phase 2: compute effective priorities (empty columns get a penalty).
-  let mut priorities: [(u8, usize); 11] = std::array::from_fn(|i| {
-    let base = COL_SPECS[i].priority;
-    let all_empty = cells.iter().all(|row| row[i].width() == 0);
-
-    let effective = if all_empty {
-      base.saturating_add(EMPTY_PENALTY)
-    } else {
-      base
-    };
-
-    (effective, i)
-  });
-
-  // Sort ascending by effective priority (lowest = most important).
-  priorities.sort_by_key(|&(p, _)| p);
-
-  // Phase 3: allocate in priority order.
+/// Allocate column widths by iterating columns in priority order,
+/// consuming from a fixed terminal-width budget. Shrinkable columns
+/// may receive less than their ideal width; non-shrinkable columns
+/// may fall back to their minimum width or be hidden entirely.
+fn allocate_columns(
+  priorities: &[(u8, usize); 11],
+  ideal: &[usize; 11],
+  budget: usize,
+  full: bool,
+) -> ([usize; 11], [bool; 11], usize) {
   let mut widths = [0usize; 11];
   let mut visible = [false; 11];
-  let budget = term_width.saturating_sub(GUTTER_WIDTH);
   let mut remaining = budget;
 
-  for &(_, col) in &priorities {
+  for &(_, col) in priorities {
+    // Columns gated behind --full are never allocated in compact mode.
+    if !full && FULL_ONLY_COLS.contains(&col) {
+      continue;
+    }
+
     let spec = &COL_SPECS[col];
 
     // Cap ideal at max_width if specified.
@@ -478,6 +457,76 @@ fn compute_widths(cells: &[[Cell; 11]], term_width: Option<u16>) -> ([usize; 11]
     }
     // Otherwise column is hidden (width stays 0, visible stays false).
   }
+
+  (widths, visible, remaining)
+}
+
+/// Compute column widths and a visibility mask. When `term_width` is
+/// `None`, every column gets its ideal (natural) width. When `Some`,
+/// columns are dropped by priority, shrunk, and capped to fit.
+fn compute_widths(
+  cells: &[[Cell; 11]],
+  term_width: Option<u16>,
+  full: bool,
+) -> ([usize; 11], [bool; 11]) {
+  // Phase 1: compute ideal (natural) widths — max of header and all cells.
+  let mut ideal = [0usize; 11];
+
+  for (i, h) in HEADERS.iter().enumerate() {
+    ideal[i] = h.width();
+  }
+
+  for row in cells {
+    for (i, cell) in row.iter().enumerate() {
+      let w = cell.width();
+
+      if w > ideal[i] {
+        ideal[i] = w;
+      }
+    }
+  }
+
+  let term_width = match term_width {
+    Some(w) => w as usize,
+    None => {
+      let mut visible = [true; 11];
+
+      if !full {
+        for &col in &FULL_ONLY_COLS {
+          visible[col] = false;
+        }
+      }
+
+      return (ideal, visible);
+    }
+  };
+
+  // Phase 2: compute effective priorities (empty columns get a penalty).
+  // Columns gated behind `--full` get max priority when not in full mode,
+  // which makes the budget-based allocator skip them.
+  let mut priorities: [(u8, usize); 11] = std::array::from_fn(|i| {
+    if !full && FULL_ONLY_COLS.contains(&i) {
+      return (u8::MAX, i);
+    }
+
+    let base = COL_SPECS[i].priority;
+    let all_empty = cells.iter().all(|row| row[i].width() == 0);
+
+    let effective = if all_empty {
+      base.saturating_add(EMPTY_PENALTY)
+    } else {
+      base
+    };
+
+    (effective, i)
+  });
+
+  // Sort ascending by effective priority (lowest = most important).
+  priorities.sort_by_key(|&(p, _)| p);
+
+  // Phase 3: allocate in priority order.
+  let budget = term_width.saturating_sub(GUTTER_WIDTH);
+  let (mut widths, visible, remaining) = allocate_columns(&priorities, &ideal, budget, full);
 
   // Phase 4: distribute remaining space to Message (the most useful
   // flexible column), up to its max_width.
@@ -968,6 +1017,248 @@ pub fn format_statusline(rows: &[ListRow], current: Option<&str>) -> String {
       format!("@? | {total} ws")
     }
   }
+}
+
+/// Intermediate representation for a single dry-run action, shared by
+/// both the human-readable and JSON formatters.
+struct DryRunEntry<'a> {
+  /// Machine-readable action type (e.g. `"workspace_add"`).
+  kind: &'static str,
+  /// Primary name (workspace, bookmark, or hook name).
+  name: Option<&'a str>,
+  /// Primary path (workspace path, directory to delete, source of rename).
+  path: Option<&'a std::path::Path>,
+  /// Secondary name (new name after rename, or workspace for bookmark create).
+  new_name: Option<&'a str>,
+  /// Secondary path (destination of rename/move).
+  new_path: Option<&'a std::path::Path>,
+  /// Rendered command string (for hooks and exec actions).
+  rendered_cmd: Option<&'a str>,
+}
+
+/// Extract the relevant fields from an [`Action`] into a [`DryRunEntry`].
+/// Returns `None` for actions that should be excluded from dry-run output
+/// (e.g. `PrintLine`).
+fn dry_run_entry(action: &Action) -> Option<DryRunEntry<'_>> {
+  match action {
+    Action::JjWorkspaceAdd { name, path } => Some(DryRunEntry {
+      kind: "workspace_add",
+      name: Some(name),
+      path: Some(path),
+      new_name: None,
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::JjBookmarkCreate { name, workspace } => Some(DryRunEntry {
+      kind: "bookmark_create",
+      name: Some(name),
+      path: None,
+      new_name: Some(workspace),
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::JjWorkspaceForget { name } => Some(DryRunEntry {
+      kind: "workspace_forget",
+      name: Some(name),
+      path: None,
+      new_name: None,
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::JjBookmarkDelete { name } => Some(DryRunEntry {
+      kind: "bookmark_delete",
+      name: Some(name),
+      path: None,
+      new_name: None,
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::JjWorkspaceUpdateStale { name } => Some(DryRunEntry {
+      kind: "workspace_update_stale",
+      name: Some(name),
+      path: None,
+      new_name: None,
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::DeleteDir { path } => Some(DryRunEntry {
+      kind: "delete_dir",
+      name: None,
+      path: Some(path),
+      new_name: None,
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::DeleteDirBackground { path } => Some(DryRunEntry {
+      kind: "delete_dir_background",
+      name: None,
+      path: Some(path),
+      new_name: None,
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::JjWorkspaceRename { old_name, new_name } => Some(DryRunEntry {
+      kind: "workspace_rename",
+      name: Some(old_name),
+      path: None,
+      new_name: Some(new_name),
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::RenameDir { from, to } => Some(DryRunEntry {
+      kind: "rename_dir",
+      name: None,
+      path: Some(from),
+      new_name: None,
+      new_path: Some(to),
+      rendered_cmd: None,
+    }),
+    Action::JjBookmarkRename { old_name, new_name } => Some(DryRunEntry {
+      kind: "bookmark_rename",
+      name: Some(old_name),
+      path: None,
+      new_name: Some(new_name),
+      new_path: None,
+      rendered_cmd: None,
+    }),
+    Action::RunHook {
+      name, rendered_cmd, ..
+    } => Some(DryRunEntry {
+      kind: "run_hook",
+      name: Some(name),
+      path: None,
+      new_name: None,
+      new_path: None,
+      rendered_cmd: Some(rendered_cmd),
+    }),
+    Action::Exec { rendered_cmd, .. } => Some(DryRunEntry {
+      kind: "exec",
+      name: None,
+      path: None,
+      new_name: None,
+      new_path: None,
+      rendered_cmd: Some(rendered_cmd),
+    }),
+    Action::PrintLine(_) => None,
+  }
+}
+
+/// Format a single [`DryRunEntry`] as a human-readable line.
+fn format_dry_run_line(e: &DryRunEntry<'_>) -> String {
+  match e.kind {
+    "workspace_add" => format!(
+      "would create workspace '{}' at {}",
+      e.name.unwrap(),
+      e.path.unwrap().display()
+    ),
+    "bookmark_create" => format!("would create bookmark '{}'", e.name.unwrap()),
+    "workspace_forget" => format!("would forget workspace '{}'", e.name.unwrap()),
+    "bookmark_delete" => format!("would delete bookmark '{}'", e.name.unwrap()),
+    "workspace_update_stale" => {
+      format!("would update stale workspace '{}'", e.name.unwrap())
+    }
+    "delete_dir" => format!("would delete {}", e.path.unwrap().display()),
+    "delete_dir_background" => {
+      format!("would delete {} (background)", e.path.unwrap().display())
+    }
+    "workspace_rename" => format!(
+      "would rename workspace '{}' \u{2192} '{}'",
+      e.name.unwrap(),
+      e.new_name.unwrap()
+    ),
+    "rename_dir" => format!(
+      "would move {} \u{2192} {}",
+      e.path.unwrap().display(),
+      e.new_path.unwrap().display()
+    ),
+    "bookmark_rename" => format!(
+      "would rename bookmark '{}' \u{2192} '{}'",
+      e.name.unwrap(),
+      e.new_name.unwrap()
+    ),
+    "run_hook" => format!(
+      "would run hook '{}': {}",
+      e.name.unwrap(),
+      e.rendered_cmd.unwrap()
+    ),
+    "exec" => format!("would exec: {}", e.rendered_cmd.unwrap()),
+    _ => unreachable!("unknown dry-run entry kind: {}", e.kind),
+  }
+}
+
+/// Format a single [`DryRunEntry`] as a JSON object.
+fn format_dry_run_value(e: &DryRunEntry<'_>) -> Value {
+  let mut m = Map::new();
+
+  m.insert("type".into(), Value::String(e.kind.into()));
+
+  if let Some(name) = e.name {
+    match e.kind {
+      "workspace_rename" | "bookmark_rename" => {
+        m.insert("old_name".into(), Value::String(name.into()));
+      }
+      _ => {
+        m.insert("name".into(), Value::String(name.into()));
+      }
+    }
+  }
+
+  if let Some(path) = e.path {
+    match e.kind {
+      "rename_dir" => {
+        m.insert("from".into(), Value::String(path.display().to_string()));
+      }
+      _ => {
+        m.insert("path".into(), Value::String(path.display().to_string()));
+      }
+    }
+  }
+
+  if let Some(new_name) = e.new_name {
+    match e.kind {
+      "bookmark_create" => {
+        m.insert("workspace".into(), Value::String(new_name.into()));
+      }
+      _ => {
+        m.insert("new_name".into(), Value::String(new_name.into()));
+      }
+    }
+  }
+
+  if let Some(new_path) = e.new_path {
+    m.insert("to".into(), Value::String(new_path.display().to_string()));
+  }
+
+  if let Some(cmd) = e.rendered_cmd {
+    m.insert("rendered_cmd".into(), Value::String(cmd.into()));
+  }
+
+  Value::Object(m)
+}
+
+/// Render a human-readable dry-run summary of the planned actions.
+/// Each action is described on its own line; `PrintLine` actions are skipped.
+pub fn format_dry_run(actions: &[Action]) -> String {
+  let lines: Vec<String> = actions
+    .iter()
+    .filter_map(dry_run_entry)
+    .map(|e| format_dry_run_line(&e))
+    .collect();
+
+  lines.join("\n")
+}
+
+/// Render a JSON dry-run summary of the planned actions.
+/// Each action becomes a JSON object with a `type` field and relevant details.
+/// `PrintLine` actions are excluded.
+pub fn format_dry_run_json(actions: &[Action]) -> String {
+  let arr: Vec<Value> = actions
+    .iter()
+    .filter_map(dry_run_entry)
+    .map(|e| format_dry_run_value(&e))
+    .collect();
+
+  serde_json::to_string_pretty(&Value::Array(arr)).expect("json serialize")
 }
 
 #[cfg(test)]

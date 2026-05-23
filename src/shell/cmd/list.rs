@@ -66,8 +66,8 @@ pub fn run(
           crate::shell::llm::get_jj_diff_stat(&row.workspace.path).unwrap_or_default();
 
         if let Some(summary) = crate::shell::llm::generate_summary(command, message, &diff_stat) {
-          row.summary = summary.clone();
-          crate::shell::llm_cache::put(&mut cache, commit_id.clone(), summary);
+          crate::shell::llm_cache::put(&mut cache, commit_id.clone(), summary.clone());
+          row.summary = summary;
           cache_dirty = true;
         }
       }

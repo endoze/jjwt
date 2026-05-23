@@ -32,7 +32,7 @@ pub fn run(cwd: &Path) -> Result<()> {
     .workspaces
     .iter()
     .find(|w| w.name == selected)
-    .expect("selected name came from workspace list");
+    .ok_or_else(|| anyhow::anyhow!("selected workspace '{selected}' not found"))?;
 
   println!("{}", ws.path.display());
 

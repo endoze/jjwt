@@ -8,8 +8,8 @@ use anyhow::{Result, bail};
 ///      `exec:<cmd>`; we `cd` then `eval` the command.
 const FISH_WRAPPER: &str = r#"function wt
     switch $argv[1]
-        case switch
-            set -l __wt_out (command jjwt switch $argv[2..])
+        case switch remove
+            set -l __wt_out (command jjwt $argv[1] $argv[2..])
             or return $status
             set -l __wt_cd ""
             set -l __wt_exec ""
@@ -35,12 +35,17 @@ const FISH_WRAPPER: &str = r#"function wt
 end
 "#;
 
+/// Fish completions for workspace names on `switch` and `remove`.
+const FISH_COMPLETIONS: &str = r#"complete -c wt -n '__fish_seen_subcommand_from switch remove' -xa '(command jjwt step _complete-workspaces 2>/dev/null)'
+"#;
+
 /// POSIX (bash/zsh) wrapper. Same directive protocol as Fish.
 const POSIX_WRAPPER: &str = r#"wt() {
-  if [ "$1" = "switch" ]; then
+  if [ "$1" = "switch" ] || [ "$1" = "remove" ]; then
+    local __wt_subcmd="$1"
     shift
     local __wt_out __wt_cd __wt_exec line
-    __wt_out=$(command jjwt switch "$@") || return $?
+    __wt_out=$(command jjwt "$__wt_subcmd" "$@") || return $?
     __wt_cd=""
     __wt_exec=""
     while IFS= read -r line; do
@@ -68,9 +73,34 @@ EOF
 }
 "#;
 
+/// Bash completions for workspace names on `switch` and `remove`.
+const BASH_COMPLETIONS: &str = r#"_wt_complete() {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local subcmd="${COMP_WORDS[1]}"
+  if [ "$subcmd" = "switch" ] || [ "$subcmd" = "remove" ]; then
+    COMPREPLY=($(compgen -W "$(command jjwt step _complete-workspaces 2>/dev/null)" -- "$cur"))
+  fi
+}
+complete -F _wt_complete wt
+"#;
+
+/// Zsh completions for workspace names on `switch` and `remove`.
+const ZSH_COMPLETIONS: &str = r#"_wt_complete() {
+  local cur="${words[CURRENT]}"
+  local subcmd="${words[2]}"
+  if [ "$subcmd" = "switch" ] || [ "$subcmd" = "remove" ]; then
+    local completions
+    completions=($(command jjwt step _complete-workspaces 2>/dev/null))
+    compadd -a completions
+  fi
+}
+compdef _wt_complete wt
+"#;
+
 /// Print the Fish shell wrapper function to stdout.
 pub fn run_fish() -> Result<()> {
   print!("{FISH_WRAPPER}");
+  print!("{FISH_COMPLETIONS}");
 
   Ok(())
 }
@@ -78,6 +108,7 @@ pub fn run_fish() -> Result<()> {
 /// Print the Bash shell wrapper function to stdout.
 pub fn run_bash() -> Result<()> {
   print!("{POSIX_WRAPPER}");
+  print!("{BASH_COMPLETIONS}");
 
   Ok(())
 }
@@ -85,6 +116,7 @@ pub fn run_bash() -> Result<()> {
 /// Print the Zsh shell wrapper function to stdout.
 pub fn run_zsh() -> Result<()> {
   print!("{POSIX_WRAPPER}");
+  print!("{ZSH_COMPLETIONS}");
 
   Ok(())
 }

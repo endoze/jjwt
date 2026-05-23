@@ -290,23 +290,17 @@ impl MergedConfig {
   }
 
   fn merge_hooks(user: &[HookGroup], project: &[HookGroup]) -> Vec<SourcedHookGroup> {
-    let mut out = Vec::with_capacity(user.len() + project.len());
-
-    for g in user {
-      out.push(SourcedHookGroup {
+    user
+      .iter()
+      .map(|g| SourcedHookGroup {
         source: HookSource::User,
         group: g.clone(),
-      });
-    }
-
-    for g in project {
-      out.push(SourcedHookGroup {
+      })
+      .chain(project.iter().map(|g| SourcedHookGroup {
         source: HookSource::Project,
         group: g.clone(),
-      });
-    }
-
-    out
+      }))
+      .collect()
   }
 }
 
@@ -812,6 +806,8 @@ pub struct ObservedListState {
   /// asked for `--remotes`. Format: bare local name (the `@<remote>`
   /// suffix is stripped).
   pub extra_remote_only_names: Vec<String>,
+  /// Whether `--full` mode is active (show all columns).
+  pub full: bool,
 }
 
 /// What kind of row this is. `Workspace` rows have a real path and full
@@ -834,8 +830,8 @@ pub struct ListOptions {
   pub include_bookmarks: bool,
   /// Include remote-only bookmarks (`<name>@<remote>` with no local).
   pub include_remotes: bool,
-  /// Reserved for later — adds extra columns. Phase 1 plumbs the flag;
-  /// the renderer keeps the existing column layout.
+  /// Show additional columns (CI, URL, Commit, Age, Summary) and query
+  /// CI status and LLM summaries when enabled.
   pub full: bool,
 }
 

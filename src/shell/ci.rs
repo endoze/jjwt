@@ -17,27 +17,13 @@ pub fn query_ci_statuses(repo_root: &Path, bookmarks: &[String]) -> HashMap<Stri
   }
 
   if let Some(statuses) = try_github(repo_root) {
-    for name in bookmarks {
-      let status = statuses
-        .get(name.as_str())
-        .copied()
-        .unwrap_or(CiStatus::None);
-
-      result.insert(name.clone(), status);
-    }
+    fill_statuses(&mut result, bookmarks, &statuses);
 
     return result;
   }
 
   if let Some(statuses) = try_gitlab(repo_root) {
-    for name in bookmarks {
-      let status = statuses
-        .get(name.as_str())
-        .copied()
-        .unwrap_or(CiStatus::None);
-
-      result.insert(name.clone(), status);
-    }
+    fill_statuses(&mut result, bookmarks, &statuses);
 
     return result;
   }
@@ -47,6 +33,21 @@ pub fn query_ci_statuses(repo_root: &Path, bookmarks: &[String]) -> HashMap<Stri
   }
 
   result
+}
+
+fn fill_statuses(
+  result: &mut HashMap<String, CiStatus>,
+  bookmarks: &[String],
+  statuses: &HashMap<String, CiStatus>,
+) {
+  for name in bookmarks {
+    let status = statuses
+      .get(name.as_str())
+      .copied()
+      .unwrap_or(CiStatus::None);
+
+    result.insert(name.clone(), status);
+  }
 }
 
 /// Attempt to query CI statuses from GitHub via `gh pr list`.

@@ -17,7 +17,7 @@ use jj_lib::settings::UserSettings;
 use jj_lib::workspace::{Workspace, default_working_copy_factories};
 
 use crate::core::types::{self, CommitInfo};
-use crate::shell::jj::Jj;
+use crate::shell::jj::{Jj, find_repo_root, workspace_dir};
 
 /// In-process jj backend using jj-lib. Loads the repo once and answers all
 /// queries from memory — no subprocess spawning.
@@ -71,7 +71,7 @@ impl JjLib {
 
   /// Borrow the current repo snapshot.
   fn repo(&self) -> Arc<ReadonlyRepo> {
-    self.repo.read().unwrap().clone()
+    self.repo.read().unwrap_or_else(|e| e.into_inner()).clone()
   }
 
   /// Find the trunk bookmark name by scanning for main/master/trunk with
@@ -173,7 +173,7 @@ impl JjLib {
 
   /// Replace the stored repo after a write transaction.
   fn swap_repo(&self, new_repo: Arc<ReadonlyRepo>) {
-    let mut guard = self.repo.write().unwrap();
+    let mut guard = self.repo.write().unwrap_or_else(|e| e.into_inner());
 
     *guard = new_repo;
   }
@@ -197,7 +197,7 @@ impl Jj for JjLib {
       // Display the default workspace using the trunk bookmark name
       // (e.g. "master" or "main") to match worktrunk's behavior.
       let display_name = if internal_name == "default" {
-        trunk_name.clone().unwrap_or(internal_name)
+        trunk_name.as_deref().unwrap_or(&internal_name).to_string()
       } else {
         internal_name
       };
@@ -317,14 +317,12 @@ impl Jj for JjLib {
     let ref_name = RefName::new(name);
     let bookmark_target = repo.view().get_local_bookmark(ref_name);
 
-    let bookmark_id = match bookmark_target.as_normal() {
-      Some(id) => id,
-      None => return Ok(false),
+    let Some(bookmark_id) = bookmark_target.as_normal() else {
+      return Ok(false);
     };
 
-    let trunk_id = match self.trunk_commit_id() {
-      Some(id) => id,
-      None => return Ok(false),
+    let Some(trunk_id) = self.trunk_commit_id() else {
+      return Ok(false);
     };
 
     repo
@@ -379,12 +377,9 @@ impl Jj for JjLib {
         .map_err(|e| anyhow::anyhow!("failed to load commit for {ws_name}: {e}"))?;
 
       let change_id = commit.change_id();
-      let commit_short = change_id.reverse_hex();
-      let commit_short = if commit_short.len() > 8 {
-        commit_short[..8].to_string()
-      } else {
-        commit_short
-      };
+      let mut commit_short = change_id.reverse_hex();
+
+      commit_short.truncate(8);
 
       let message_first_line = commit
         .description()
@@ -420,9 +415,8 @@ impl Jj for JjLib {
   fn workspace_ahead_behind_trunk(&self, _repo_root: &Path, workspace: &str) -> Result<(u32, u32)> {
     let ws_id = self.wc_commit_id(workspace)?;
 
-    let trunk_id = match self.trunk_commit_id() {
-      Some(id) => id,
-      None => return Ok((0, 0)),
+    let Some(trunk_id) = self.trunk_commit_id() else {
+      return Ok((0, 0));
     };
 
     let ahead = self.count_between(
@@ -510,7 +504,8 @@ impl Jj for JjLib {
   }
 
   fn git_fetch(&self, repo_root: &Path) -> Result<()> {
-    let mut cmd = std::process::Command::new("jj");
+    let jj_path = which::which("jj").map_err(|e| anyhow::anyhow!("jj not found: {e}"))?;
+    let mut cmd = std::process::Command::new(jj_path);
 
     cmd.arg("git").arg("fetch").arg("-R").arg(repo_root);
 
@@ -582,56 +577,6 @@ impl Jj for JjLib {
     self.swap_repo(new_repo);
 
     Ok(())
-  }
-}
-
-/// Walk up from `start` to find the repo root (parent of `.jj/`).
-fn find_repo_root(start: &Path) -> Result<PathBuf> {
-  let mut p = start.to_path_buf();
-
-  loop {
-    let jj_dir = p.join(".jj");
-
-    if jj_dir.is_dir() {
-      let marker = jj_dir.join("repo");
-
-      if marker.is_file() {
-        let content = std::fs::read_to_string(&marker)
-          .map_err(|e| anyhow::anyhow!("failed to read {marker:?}: {e}"))?;
-        let target = PathBuf::from(content.trim());
-        let resolved = if target.is_absolute() {
-          target
-        } else {
-          jj_dir.join(target)
-        };
-        let canonical = std::fs::canonicalize(&resolved)
-          .map_err(|e| anyhow::anyhow!("failed to resolve {resolved:?}: {e}"))?;
-        let main_root = canonical
-          .parent()
-          .and_then(|p| p.parent())
-          .ok_or_else(|| anyhow::anyhow!("invalid repo pointer in {marker:?}"))?
-          .to_path_buf();
-
-        return Ok(main_root);
-      }
-
-      return Ok(p);
-    }
-
-    if !p.pop() {
-      return Err(anyhow::anyhow!(
-        "not inside a jj repo (no .jj/ found above {start:?})"
-      ));
-    }
-  }
-}
-
-/// Compute workspace directory path.
-fn workspace_dir(repo_root: &Path, name: &str) -> PathBuf {
-  if name == "default" {
-    repo_root.to_path_buf()
-  } else {
-    repo_root.join(".worktrees").join(name)
   }
 }
 

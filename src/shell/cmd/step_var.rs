@@ -4,7 +4,6 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::shell::fs::RealFs;
-use crate::shell::jj::Jj;
 use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
 use crate::shell::state;
@@ -81,7 +80,5 @@ fn resolve_workspace(cwd: &Path) -> Result<(String, std::path::PathBuf)> {
     .current_workspace
     .ok_or_else(|| anyhow::anyhow!("not inside a workspace"))?;
 
-  let repo_root = jj.repo_root(cwd)?;
-
-  Ok((workspace, repo_root))
+  Ok((workspace, obs.repo_root))
 }
