@@ -58,11 +58,22 @@
             rustToolchain
             pkg-config
             openssl
+            jujutsu
+            cargo-dist
             cargo-tarpaulin
+            cargo-binstall
+            release-plz
           ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
             pkgs.darwin.apple_sdk.frameworks.Security
             pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
           ];
+
+          shellHook = ''
+            if ! command -v cargo-crap &> /dev/null; then
+              echo "Installing cargo-crap via cargo-binstall..."
+              cargo binstall cargo-crap --no-confirm 2>/dev/null || cargo install cargo-crap 2>/dev/null || true
+            fi
+          '';
         };
       }
     );

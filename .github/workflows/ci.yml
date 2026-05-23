@@ -20,8 +20,14 @@ jobs:
           toolchain: stable
       - name: Generate code coverage
         run: |
-          cargo tarpaulin --engine llvm
+          cargo tarpaulin --engine llvm --out lcov
       - name: Coveralls GitHub Action
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ github.token }}
+      - name: Install cargo-crap
+        run: |
+          cargo binstall cargo-crap --no-confirm || cargo install cargo-crap
+      - name: Run CRAP analysis
+        run: |
+          cargo crap --lcov lcov.info --format github

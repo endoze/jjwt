@@ -1,1 +1,8 @@
 /target/*
+# Coverage
+*.lcov
+lcov.info
+tarpaulin-report.*
+*.profraw
+*.profdata
+/target/*
