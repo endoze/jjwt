@@ -549,6 +549,8 @@ pub struct SwitchArgs {
   /// creating the workspace. Worktrunk's `--clobber`. Refused when the
   /// stale path lives inside another registered workspace.
   pub clobber: bool,
+  /// Only show what would be done without actually doing it.
+  pub dry_run: bool,
   /// Output format (text, JSON, or statusline).
   pub format: OutputFormat,
 }
@@ -569,6 +571,8 @@ pub struct RemoveArgs {
   /// Delete the bookmark even when not merged into trunk. Worktrunk's
   /// `-D` / `--force-delete`.
   pub force_delete: bool,
+  /// Only show what would be done without actually doing it.
+  pub dry_run: bool,
   /// Output format (text, JSON, or statusline).
   pub format: OutputFormat,
 }

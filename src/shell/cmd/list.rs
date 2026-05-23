@@ -88,7 +88,7 @@ pub fn run(
       None
     },
   };
-  let plan = plan_list(&cfg, &obs, &display, format).map_err(|e| anyhow::anyhow!("{e}"))?;
+  let plan = plan_list(&cfg, &obs, &display, format)?;
   let mut rt = Runtime::new(jj, fs, proc).with_root(obs.repo_root.clone());
   let printed = execute(&plan, &mut rt)?;
 

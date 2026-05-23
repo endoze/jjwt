@@ -165,6 +165,7 @@ fn remove_merged_bookmark_emits_full_sequence() {
     no_hooks: false,
     no_delete_branch: false,
     force_delete: false,
+    dry_run: false,
     format: Default::default(),
   };
   let obs = obs_existing("feat-x", false, true, true);
@@ -221,6 +222,7 @@ fn remove_unmerged_bookmark_errors_without_force() {
     no_hooks: false,
     no_delete_branch: false,
     force_delete: false,
+    dry_run: false,
     format: Default::default(),
   };
   let obs = obs_existing("feat-x", false, false, true);
@@ -238,6 +240,7 @@ fn remove_unmerged_bookmark_with_force_skips_bookmark_delete() {
     no_hooks: false,
     no_delete_branch: false,
     force_delete: false,
+    dry_run: false,
     format: Default::default(),
   };
   let obs = obs_existing("feat-x", false, false, true);
@@ -266,6 +269,7 @@ fn remove_dirty_without_force_errors() {
     no_hooks: false,
     no_delete_branch: false,
     force_delete: false,
+    dry_run: false,
     format: Default::default(),
   };
   let obs = obs_existing("feat-x", true, true, true);
@@ -283,6 +287,7 @@ fn remove_dirty_with_force_proceeds() {
     no_hooks: false,
     no_delete_branch: false,
     force_delete: false,
+    dry_run: false,
     format: Default::default(),
   };
   let obs = obs_existing("feat-x", true, true, true);
@@ -317,6 +322,7 @@ fn remove_missing_workspace_errors() {
     no_hooks: false,
     no_delete_branch: false,
     force_delete: false,
+    dry_run: false,
     format: Default::default(),
   };
   let mut obs = obs_existing("feat-x", false, true, true);
@@ -335,6 +341,7 @@ fn remove_no_bookmark_skips_delete() {
     no_hooks: false,
     no_delete_branch: false,
     force_delete: false,
+    dry_run: false,
     format: Default::default(),
   };
   let obs = obs_existing("feat-x", false, true, false);

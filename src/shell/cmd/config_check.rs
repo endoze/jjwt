@@ -17,9 +17,7 @@ pub fn run(cwd: &Path, config_path: Option<&Path>) -> Result<()> {
       c
     }
     Err(e) => {
-      println!("[err]  Config load failed: {e}");
-      // Can't proceed with further checks.
-      std::process::exit(1);
+      anyhow::bail!("Config load failed: {e}");
     }
   };
 
@@ -94,7 +92,7 @@ pub fn run(cwd: &Path, config_path: Option<&Path>) -> Result<()> {
   }
 
   if errors > 0 {
-    std::process::exit(1);
+    anyhow::bail!("{errors} error(s), {warnings} warning(s)");
   }
 
   Ok(())

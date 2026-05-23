@@ -39,7 +39,7 @@ pub fn run(cwd: &Path, template: &str) -> Result<()> {
     cwd: Some(ws_path),
     ..Default::default()
   };
-  let out = render(template, &ctx).map_err(|e| anyhow::anyhow!("{e}"))?;
+  let out = render(template, &ctx)?;
 
   println!("{out}");
 

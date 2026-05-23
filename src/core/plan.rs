@@ -1,6 +1,7 @@
 use crate::core::format::{format_age, format_list_json, format_list_table, format_remove_json};
 use crate::core::template::render;
 use crate::core::types::*;
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -351,19 +352,18 @@ fn emit_switch_output(
 
   match format {
     OutputFormat::Json => {
-      let path_str = ws_path.display().to_string();
-      let mut obj = serde_json::Map::new();
-
-      obj.insert("name".into(), serde_json::Value::String(name.to_string()));
-      obj.insert("path".into(), serde_json::Value::String(path_str));
-      obj.insert("created".into(), serde_json::Value::Bool(created));
+      let mut obj = json!({
+        "name": name,
+        "path": ws_path.display().to_string(),
+        "created": created,
+      });
 
       if let Some(cmd) = &rendered_exec {
-        obj.insert("execute".into(), serde_json::Value::String(cmd.clone()));
+        obj["execute"] = json!(cmd);
       }
 
       plan.push(Action::PrintLine(
-        serde_json::to_string(&serde_json::Value::Object(obj)).expect("json"),
+        serde_json::to_string(&obj).expect("json"),
       ));
     }
     OutputFormat::Text | OutputFormat::Statusline => {
@@ -649,31 +649,16 @@ pub fn plan_relocate(
 
   match args.format {
     OutputFormat::Json => {
-      let mut obj = serde_json::Map::new();
-
-      obj.insert(
-        "old_name".into(),
-        serde_json::Value::String(args.old_name.clone()),
-      );
-      obj.insert(
-        "new_name".into(),
-        serde_json::Value::String(args.new_name.clone()),
-      );
-      obj.insert(
-        "old_path".into(),
-        serde_json::Value::String(old_path.display().to_string()),
-      );
-      obj.insert(
-        "new_path".into(),
-        serde_json::Value::String(new_path.display().to_string()),
-      );
-      obj.insert(
-        "bookmark_renamed".into(),
-        serde_json::Value::Bool(args.rename_bookmark),
-      );
+      let obj = json!({
+        "old_name": args.old_name,
+        "new_name": args.new_name,
+        "old_path": old_path.display().to_string(),
+        "new_path": new_path.display().to_string(),
+        "bookmark_renamed": args.rename_bookmark,
+      });
 
       plan.push(Action::PrintLine(
-        serde_json::to_string(&serde_json::Value::Object(obj)).expect("json"),
+        serde_json::to_string(&obj).expect("json"),
       ));
     }
     OutputFormat::Text | OutputFormat::Statusline => {
@@ -973,27 +958,18 @@ fn plan_hook_show_json(
   let items: Vec<serde_json::Value> = entries
     .iter()
     .map(|(hook_type, name, tmpl, source)| {
-      let mut obj = serde_json::Map::new();
-
-      obj.insert(
-        "type".into(),
-        serde_json::Value::String(hook_type.to_string()),
-      );
-      obj.insert("name".into(), serde_json::Value::String(name.to_string()));
-      obj.insert(
-        "source".into(),
-        serde_json::Value::String(source.to_string()),
-      );
-      obj.insert(
-        "template".into(),
-        serde_json::Value::String(tmpl.to_string()),
-      );
+      let mut obj = json!({
+        "type": hook_type.to_string(),
+        "name": name.to_string(),
+        "source": source.to_string(),
+        "template": tmpl.to_string(),
+      });
 
       if expanded && let Some(rendered) = render_hook_template(obs, tmpl) {
-        obj.insert("rendered".into(), serde_json::Value::String(rendered));
+        obj["rendered"] = json!(rendered);
       }
 
-      serde_json::Value::Object(obj)
+      obj
     })
     .collect();
 
@@ -1132,20 +1108,80 @@ fn current_workspace_or_root(obs: &ObservedState) -> (String, PathBuf) {
     .unwrap_or_else(|| (String::new(), obs.repo_root.clone()))
 }
 
-/// Truncate a string to `max` characters, appending `...` if shortened.
+/// Truncate a string to `max` visible characters, appending `...` if shortened.
+/// Uses `char_indices()` to avoid panicking on multi-byte UTF-8 boundaries.
 fn truncate_line(s: &str, max: usize) -> String {
   let first_line = s.lines().next().unwrap_or(s);
 
-  if first_line.len() > max {
-    format!("{}...", &first_line[..max - 3])
-  } else {
-    first_line.to_string()
+  if first_line.chars().count() <= max {
+    return first_line.to_string();
   }
+
+  if max <= 3 {
+    return ".".repeat(max);
+  }
+
+  let target = max - 3;
+  let mut last_idx = 0;
+
+  for (count, (idx, ch)) in first_line.char_indices().enumerate() {
+    if count >= target {
+      break;
+    }
+
+    last_idx = idx + ch.len_utf8();
+  }
+
+  format!("{}...", &first_line[..last_idx])
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn truncate_line_no_op_when_short() {
+    assert_eq!(truncate_line("hello", 10), "hello");
+  }
+
+  #[test]
+  fn truncate_line_exact_length() {
+    assert_eq!(truncate_line("hello", 5), "hello");
+  }
+
+  #[test]
+  fn truncate_line_ascii_truncation() {
+    assert_eq!(truncate_line("hello world", 8), "hello...");
+  }
+
+  #[test]
+  fn truncate_line_multibyte_utf8() {
+    // "äöü" is 6 bytes but 3 chars — must not panic
+    assert_eq!(truncate_line("äöüxyz", 5), "äö...");
+  }
+
+  #[test]
+  fn truncate_line_cjk() {
+    assert_eq!(truncate_line("日本語テスト", 5), "日本...");
+  }
+
+  #[test]
+  fn truncate_line_emoji() {
+    // Each emoji is 4 bytes but 1 char — must not panic
+    assert_eq!(truncate_line("🎉🎊🎈🎁🎀🎗️", 5), "🎉🎊...");
+  }
+
+  #[test]
+  fn truncate_line_max_less_than_three() {
+    assert_eq!(truncate_line("hello", 2), "..");
+    assert_eq!(truncate_line("hello", 1), ".");
+    assert_eq!(truncate_line("hello", 0), "");
+  }
+
+  #[test]
+  fn truncate_line_uses_first_line() {
+    assert_eq!(truncate_line("first\nsecond", 20), "first");
+  }
 
   #[test]
   fn trunk_rel_is_trunk() {

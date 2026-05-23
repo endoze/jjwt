@@ -101,6 +101,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    dry_run: false,
     format: Default::default(),
   };
   let obs = observed_clean();
@@ -185,6 +186,7 @@ fn create_errors_if_workspace_already_exists() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
@@ -208,6 +210,7 @@ fn create_errors_if_not_a_jj_repo() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
@@ -227,6 +230,7 @@ fn switch_existing_no_create_emits_only_print() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
@@ -257,6 +261,7 @@ fn switch_existing_stale_emits_update_stale_then_print() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
@@ -287,6 +292,7 @@ fn switch_existing_with_rerun_hooks_reruns_them() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
@@ -314,6 +320,7 @@ fn switch_missing_without_create_errors() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    dry_run: false,
     format: Default::default(),
   };
   let obs = observed_clean();
@@ -332,6 +339,7 @@ fn switch_trunk_bookmark_name_routes_to_default_workspace() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();

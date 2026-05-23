@@ -100,16 +100,5 @@ pub fn run(cwd: &Path) -> Result<()> {
 
 /// Walk up from `start` looking for a `.jj` directory.
 fn find_jj_root(start: &Path) -> Option<std::path::PathBuf> {
-  let mut current = start;
-
-  loop {
-    if current.join(".jj").is_dir() {
-      return Some(current.to_path_buf());
-    }
-
-    match current.parent() {
-      Some(p) => current = p,
-      None => return None,
-    }
-  }
+  crate::shell::jj::find_nearest_jj_dir(start)
 }

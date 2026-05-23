@@ -38,8 +38,7 @@ pub fn run(
     None
   };
 
-  let plan = plan_hook_show(&cfg, expanded, obs.as_ref(), format, source_filter)
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+  let plan = plan_hook_show(&cfg, expanded, obs.as_ref(), format, source_filter)?;
 
   let mut rt = Runtime::new(jj, fs, proc);
 

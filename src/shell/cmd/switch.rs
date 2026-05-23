@@ -171,19 +171,7 @@ fn should_auto_create<J: Jj, F: crate::shell::fs::Fs>(
 }
 
 /// Execute the `switch` command: resolve the target, plan, and run.
-#[allow(clippy::too_many_arguments)]
-pub fn run(
-  cwd: &Path,
-  config_path: Option<&Path>,
-  name: String,
-  create: bool,
-  rerun_hooks: bool,
-  no_hooks: bool,
-  execute: Option<String>,
-  clobber: bool,
-  dry_run: bool,
-  format: OutputFormat,
-) -> Result<()> {
+pub fn run(cwd: &Path, config_path: Option<&Path>, mut args: SwitchArgs) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)?;
 
   let jj = JjLib::new(cwd)?;
@@ -201,34 +189,29 @@ pub fn run(
   // Shortcuts (`^`, `@`, `-`) make no sense in combination with `--create`
   // — they all expand to existing workspaces. Surface a clear error rather
   // than confusing the user with a downstream "workspace already exists".
-  if create && matches!(name.as_str(), "^" | "@" | "-") {
-    bail!("`{name}` is a shortcut to an existing workspace and cannot be combined with --create");
+  if args.create && matches!(args.name.as_str(), "^" | "@" | "-") {
+    bail!(
+      "`{}` is a shortcut to an existing workspace and cannot be combined with --create",
+      args.name
+    );
   }
 
-  let (resolved_name, current_before) = resolve_shortcut(&name, cwd, &jj, &fs)?;
+  let (resolved_name, current_before) = resolve_shortcut(&args.name, cwd, &jj, &fs)?;
 
-  let create = create || should_auto_create(&jj, &fs, cwd, &resolved_name, &name)?;
+  args.create = args.create || should_auto_create(&jj, &fs, cwd, &resolved_name, &args.name)?;
+  args.name = resolved_name;
 
   let obs = observe(
     &jj,
     &fs,
     cwd,
-    Some(&resolved_name),
+    Some(&args.name),
     cfg.worktree_path_template.as_deref(),
   )?;
-  let args = SwitchArgs {
-    name: resolved_name,
-    create,
-    rerun_hooks,
-    no_hooks,
-    execute,
-    clobber,
-    format,
-  };
-  let plan = plan_switch(&cfg, &args, &obs).map_err(|e| anyhow::anyhow!("{e}"))?;
+  let plan = plan_switch(&cfg, &args, &obs)?;
 
-  if dry_run {
-    let output = match format {
+  if args.dry_run {
+    let output = match args.format {
       OutputFormat::Json => format_dry_run_json(&plan.actions),
       _ => format_dry_run(&plan.actions),
     };

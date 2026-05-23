@@ -51,8 +51,7 @@ pub fn observe<J: Jj, F: Fs>(
         branch: name.into(),
         ..Default::default()
       };
-      let rendered =
-        crate::core::template::render(tmpl, &ctx).map_err(|e| anyhow::anyhow!("{e}"))?;
+      let rendered = crate::core::template::render(tmpl, &ctx)?;
 
       repo_root.join(rendered)
     } else {
