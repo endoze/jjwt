@@ -1,6 +1,18 @@
 #![cfg(not(tarpaulin_include))]
 
-use anyhow::{Result, bail};
+use anyhow::Result;
+use clap::ValueEnum;
+
+/// Supported shell flavors for the `config shell init` command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ShellKind {
+  /// Bash shell.
+  Bash,
+  /// Zsh shell.
+  Zsh,
+  /// Fish shell.
+  Fish,
+}
 
 /// Fish wrapper. Supports two output protocols from `jjwt switch`:
 ///   1. legacy — a single bare path; we `cd` to it.
@@ -121,12 +133,11 @@ pub fn run_zsh() -> Result<()> {
   Ok(())
 }
 
-/// Dispatch to the correct shell wrapper emitter based on shell name.
-pub fn dispatch(shell: &str) -> Result<()> {
+/// Dispatch to the correct shell wrapper emitter based on shell kind.
+pub fn dispatch(shell: ShellKind) -> Result<()> {
   match shell {
-    "fish" => run_fish(),
-    "bash" => run_bash(),
-    "zsh" => run_zsh(),
-    other => bail!("unsupported shell '{other}' (supported: fish, bash, zsh)"),
+    ShellKind::Fish => run_fish(),
+    ShellKind::Bash => run_bash(),
+    ShellKind::Zsh => run_zsh(),
   }
 }

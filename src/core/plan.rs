@@ -193,8 +193,9 @@ fn plan_switch_create(
 
   let revision = args
     .base
-    .clone()
-    .or_else(|| obs.trunk_bookmark.clone());
+    .as_ref()
+    .or(obs.trunk_bookmark.as_ref())
+    .cloned();
 
   plan.push(Action::JjWorkspaceAdd {
     name: args.name.clone(),
@@ -379,6 +380,7 @@ fn emit_switch_output(
 /// Build a plan for the `remove` subcommand (forget workspace and clean up).
 pub fn plan_remove(
   cfg: &MergedConfig,
+  name: &str,
   args: &RemoveArgs,
   obs: &ObservedState,
 ) -> Result<Plan, CoreError> {
@@ -389,11 +391,11 @@ pub fn plan_remove(
   let ws = obs
     .workspaces
     .iter()
-    .find(|w| w.name == args.name)
-    .ok_or_else(|| CoreError::WorkspaceMissing(args.name.clone()))?;
+    .find(|w| w.name == name)
+    .ok_or_else(|| CoreError::WorkspaceMissing(name.to_string()))?;
 
   if !args.force && obs.target_workspace_dirty {
-    return Err(CoreError::WorkspaceDirty(args.name.clone()));
+    return Err(CoreError::WorkspaceDirty(name.to_string()));
   }
 
   // Unmerged-bookmark guard fires when the bookmark would be deleted
@@ -407,7 +409,7 @@ pub fn plan_remove(
     && !args.force_delete
     && !args.force
   {
-    return Err(CoreError::BookmarkUnmerged(args.name.clone()));
+    return Err(CoreError::BookmarkUnmerged(name.to_string()));
   }
 
   let ws_path = ws.path.clone();
@@ -417,13 +419,13 @@ pub fn plan_remove(
     !args.no_hooks,
     &cfg.hooks.pre_remove,
     "pre-remove",
-    &args.name,
+    name,
     &ws_path,
     &obs.repo_root,
   )?;
 
   plan.push(Action::JjWorkspaceForget {
-    name: args.name.clone(),
+    name: name.to_string(),
   });
 
   if cfg.background_remove == Some(true) {
@@ -447,7 +449,7 @@ pub fn plan_remove(
 
   if bookmark_deleted {
     plan.push(Action::JjBookmarkDelete {
-      name: args.name.clone(),
+      name: name.to_string(),
     });
   }
 
@@ -459,14 +461,14 @@ pub fn plan_remove(
     !args.no_hooks,
     &cfg.hooks.post_remove,
     "post-remove",
-    &args.name,
+    name,
     &obs.repo_root,
     &obs.repo_root,
   )?;
 
   if let OutputFormat::Json = args.format {
     plan.push(Action::PrintLine(format_remove_json(
-      &args.name,
+      name,
       &ws_path,
       bookmark_deleted,
     )));
@@ -693,9 +695,8 @@ pub fn plan_prune(
       continue;
     }
 
-    let ws = match obs.workspaces.iter().find(|w| &w.name == name) {
-      Some(w) => w,
-      None => continue,
+    let Some(ws) = obs.workspaces.iter().find(|w| &w.name == name) else {
+      continue;
     };
 
     if args.dry_run {
@@ -743,15 +744,10 @@ pub fn plan_prune(
   // Output.
   match args.format {
     OutputFormat::Json => {
-      let items: Vec<serde_json::Value> = pruned
-        .iter()
-        .map(|n| serde_json::Value::String(n.clone()))
-        .collect();
-
       plan.push(Action::PrintLine(
         serde_json::to_string(&serde_json::json!({
           "dry_run": args.dry_run,
-          "pruned": items,
+          "pruned": pruned,
         }))
         .expect("json"),
       ));
@@ -959,10 +955,10 @@ fn plan_hook_show_json(
     .iter()
     .map(|(hook_type, name, tmpl, source)| {
       let mut obj = json!({
-        "type": hook_type.to_string(),
-        "name": name.to_string(),
+        "type": hook_type,
+        "name": name,
         "source": source.to_string(),
-        "template": tmpl.to_string(),
+        "template": tmpl,
       });
 
       if expanded && let Some(rendered) = render_hook_template(obs, tmpl) {
@@ -1005,10 +1001,12 @@ fn plan_hook_show_text(
     .max(4);
   let source_w = entries
     .iter()
-    .map(|(_, _, _, s)| s.to_string().len())
+    .map(|(_, _, _, s)| match s {
+      HookSource::User => 4,
+      HookSource::Project => 7,
+    })
     .max()
-    .unwrap_or(6)
-    .max(6);
+    .unwrap_or(6);
 
   // Header.
   let last_col = if expanded { "Rendered" } else { "Template" };
@@ -1113,26 +1111,33 @@ fn current_workspace_or_root(obs: &ObservedState) -> (String, PathBuf) {
 fn truncate_line(s: &str, max: usize) -> String {
   let first_line = s.lines().next().unwrap_or(s);
 
-  if first_line.chars().count() <= max {
-    return first_line.to_string();
-  }
-
   if max <= 3 {
+    // Short max: only emit dots if we actually need to truncate.
+    let mut chars = first_line.chars();
+
+    if chars.by_ref().take(max + 1).count() <= max {
+      return first_line.to_string();
+    }
+
     return ".".repeat(max);
   }
 
   let target = max - 3;
   let mut last_idx = 0;
+  let mut count = 0;
 
-  for (count, (idx, ch)) in first_line.char_indices().enumerate() {
-    if count >= target {
-      break;
+  for (idx, ch) in first_line.char_indices() {
+    count += 1;
+
+    if count <= target {
+      last_idx = idx + ch.len_utf8();
+    } else if count > max {
+      return format!("{}...", &first_line[..last_idx]);
     }
-
-    last_idx = idx + ch.len_utf8();
   }
 
-  format!("{}...", &first_line[..last_idx])
+  // Walked the whole string and the char count never exceeded `max`.
+  first_line.to_string()
 }
 
 #[cfg(test)]

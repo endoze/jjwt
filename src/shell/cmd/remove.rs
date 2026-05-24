@@ -40,7 +40,7 @@ pub fn run(
     // Default to the current workspace. Reuse observe()'s containment
     // logic so the rule matches `list` and the alias dispatch.
     let obs0 = observe(&jj, &fs, cwd, None, &cfg.worktree_path_template)?;
-    let current = obs0.current_workspace.clone().ok_or_else(|| {
+    let current = obs0.current_workspace.ok_or_else(|| {
       anyhow::anyhow!("no workspace specified and cwd is not inside a known workspace")
     })?;
 
@@ -63,12 +63,8 @@ pub fn run(
     rt.repo_root = obs.repo_root.clone();
     rt.repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
 
-    let per_name_args = RemoveArgs {
-      name: name.clone(),
-      ..args.clone()
-    };
     let plan =
-      plan_remove(&cfg, &per_name_args, &obs).with_context(|| format!("remove '{name}'"))?;
+      plan_remove(&cfg, &name, &args, &obs).with_context(|| format!("remove '{name}'"))?;
 
     if args.dry_run {
       let output = match args.format {

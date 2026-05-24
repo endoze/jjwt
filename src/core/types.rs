@@ -127,12 +127,12 @@ impl Config {
   /// `hook show`.
   pub fn all_hook_groups(&self) -> Vec<(&'static str, &[HookGroup])> {
     vec![
-      ("pre-switch", self.pre_switch.as_slice()),
-      ("post-switch", self.post_switch.as_slice()),
-      ("pre-start", self.pre_start.as_slice()),
-      ("post-start", self.post_start.as_slice()),
-      ("pre-remove", self.pre_remove.as_slice()),
-      ("post-remove", self.post_remove.as_slice()),
+      ("pre-switch", &self.pre_switch),
+      ("post-switch", &self.post_switch),
+      ("pre-start", &self.pre_start),
+      ("post-start", &self.post_start),
+      ("pre-remove", &self.pre_remove),
+      ("post-remove", &self.post_remove),
     ]
   }
 }
@@ -202,12 +202,12 @@ impl<T> HookSet<T> {
   /// Iterate (hook_type, groups) pairs over every configured hook slot.
   pub fn all_groups(&self) -> [(&'static str, &[T]); 6] {
     [
-      ("pre-switch", self.pre_switch.as_slice()),
-      ("post-switch", self.post_switch.as_slice()),
-      ("pre-start", self.pre_start.as_slice()),
-      ("post-start", self.post_start.as_slice()),
-      ("pre-remove", self.pre_remove.as_slice()),
-      ("post-remove", self.post_remove.as_slice()),
+      ("pre-switch", &self.pre_switch),
+      ("post-switch", &self.post_switch),
+      ("pre-start", &self.pre_start),
+      ("post-start", &self.post_start),
+      ("pre-remove", &self.pre_remove),
+      ("post-remove", &self.post_remove),
     ]
   }
 }
@@ -648,8 +648,6 @@ pub struct SwitchArgs {
 /// Arguments for the `remove` subcommand.
 #[derive(Debug, Clone, Default)]
 pub struct RemoveArgs {
-  /// Target workspace name.
-  pub name: String,
   /// Force worktree removal: bypass the "uncommitted changes" check.
   /// Worktrunk's `-f`.
   pub force: bool,

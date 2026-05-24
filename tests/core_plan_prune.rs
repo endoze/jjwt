@@ -216,7 +216,7 @@ fn prune_json_format_actual_run() {
       Action::PrintLine(s) => Some(s.clone()),
       _ => None,
     })
-    .last();
+    .next_back();
 
   let parsed: serde_json::Value =
     serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");

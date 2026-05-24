@@ -29,16 +29,14 @@ pub fn run(cwd: &Path, argv: Vec<String>) -> Result<i32> {
 
   let ws_name = obs
     .current_workspace
-    .clone()
+    .as_deref()
     .ok_or_else(|| anyhow::anyhow!("not inside a known workspace (cwd: {})", cwd.display()))?;
   let ws = obs
     .workspaces
     .iter()
     .find(|w| w.name == ws_name)
     .ok_or_else(|| anyhow::anyhow!("workspace '{ws_name}' missing from observation"))?;
-  let ws_path = ws.path.clone();
-
-  let exit = run_tethered(&argv, &ws_path)?;
+  let exit = run_tethered(&argv, &ws.path)?;
 
   Ok(exit)
 }

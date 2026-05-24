@@ -115,30 +115,45 @@ impl JjLib {
     None
   }
 
+  /// Map an external workspace name to jj's internal workspace name, given
+  /// a pre-resolved trunk bookmark. Pure — no locking or I/O. Callers in
+  /// hot loops should resolve trunk once and pass it in to avoid repeated
+  /// `resolve_trunk()` work.
+  fn internal_ws_name_with_trunk<'a>(name: &'a str, trunk: Option<&str>) -> &'a str {
+    if trunk == Some(name) {
+      "default"
+    } else {
+      name
+    }
+  }
+
   /// Map an external workspace name (which may be the trunk bookmark name
   /// for the default workspace) back to jj's internal workspace name.
   fn internal_ws_name(&self, name: &str) -> String {
-    // If this name matches the trunk bookmark, it's the default workspace.
-    if let Some(trunk) = self.resolve_trunk()
-      && name == trunk
-    {
-      return "default".to_string();
-    }
+    let trunk = self.resolve_trunk();
 
-    name.to_string()
+    Self::internal_ws_name_with_trunk(name, trunk.as_deref()).to_string()
   }
 
-  /// Resolve a workspace name to its working-copy CommitId.
-  fn wc_commit_id(&self, workspace: &str) -> Result<CommitId> {
+  /// Resolve a workspace name to its working-copy CommitId, given a
+  /// pre-resolved trunk bookmark name. Hot-loop variant of `wc_commit_id`.
+  fn wc_commit_id_with_trunk(&self, workspace: &str, trunk: Option<&str>) -> Result<CommitId> {
     let repo = self.repo();
-    let internal = self.internal_ws_name(workspace);
-    let ws_name = WorkspaceName::new(&internal);
+    let internal = Self::internal_ws_name_with_trunk(workspace, trunk);
+    let ws_name = WorkspaceName::new(internal);
 
     repo
       .view()
       .get_wc_commit_id(ws_name)
       .cloned()
       .ok_or_else(|| anyhow::anyhow!("workspace '{workspace}' not found"))
+  }
+
+  /// Resolve a workspace name to its working-copy CommitId.
+  fn wc_commit_id(&self, workspace: &str) -> Result<CommitId> {
+    let trunk = self.resolve_trunk();
+
+    self.wc_commit_id_with_trunk(workspace, trunk.as_deref())
   }
 
   /// Load a Commit by its CommitId.
@@ -403,6 +418,7 @@ impl Jj for JjLib {
     workspaces: &[String],
   ) -> Result<HashMap<String, CommitInfo>> {
     let repo = self.repo();
+    let trunk = self.resolve_trunk();
     let now = std::time::SystemTime::now()
       .duration_since(std::time::UNIX_EPOCH)
       .map(|d| d.as_secs() as i64)
@@ -411,8 +427,8 @@ impl Jj for JjLib {
     let mut result = HashMap::with_capacity(workspaces.len());
 
     for ws_name in workspaces {
-      let internal = self.internal_ws_name(ws_name);
-      let ws = WorkspaceName::new(&internal);
+      let internal = Self::internal_ws_name_with_trunk(ws_name, trunk.as_deref());
+      let ws = WorkspaceName::new(internal);
 
       let Some(commit_id) = repo.view().get_wc_commit_id(ws) else {
         continue;
@@ -432,8 +448,8 @@ impl Jj for JjLib {
         .description()
         .lines()
         .next()
-        .unwrap_or("")
-        .to_string();
+        .map(str::to_string)
+        .unwrap_or_default();
 
       let ts_millis = commit.committer().timestamp.timestamp.0;
       let ts_seconds = ts_millis / 1000;
@@ -483,11 +499,17 @@ impl Jj for JjLib {
     _repo_root: &Path,
     workspaces: &[String],
   ) -> Result<HashMap<String, (u32, u32)>> {
-    let trunk_id = self.trunk_commit_id();
+    let trunk = self.resolve_trunk();
+    let trunk_id = trunk.as_deref().and_then(|name| {
+      let repo = self.repo();
+      let ref_name = RefName::new(name);
+
+      repo.view().get_local_bookmark(ref_name).as_normal().cloned()
+    });
     let mut result = HashMap::with_capacity(workspaces.len());
 
     for ws_name in workspaces {
-      let ws_id = self.wc_commit_id(ws_name)?;
+      let ws_id = self.wc_commit_id_with_trunk(ws_name, trunk.as_deref())?;
 
       let (ahead, behind) = match &trunk_id {
         Some(tid) => {
@@ -630,11 +652,21 @@ fn minimal_settings() -> Result<UserSettings> {
   let mut config = StackedConfig::with_defaults();
   let mut layer = ConfigLayer::empty(ConfigSource::User);
 
-  layer.set_value("user.name", "jjwt").unwrap();
-  layer.set_value("user.email", "jjwt@localhost").unwrap();
-  layer.set_value("operation.hostname", "localhost").unwrap();
-  layer.set_value("operation.username", "jjwt").unwrap();
-  layer.set_value("signing.behavior", "drop").unwrap();
+  layer
+    .set_value("user.name", "jjwt")
+    .context("set user.name")?;
+  layer
+    .set_value("user.email", "jjwt@localhost")
+    .context("set user.email")?;
+  layer
+    .set_value("operation.hostname", "localhost")
+    .context("set operation.hostname")?;
+  layer
+    .set_value("operation.username", "jjwt")
+    .context("set operation.username")?;
+  layer
+    .set_value("signing.behavior", "drop")
+    .context("set signing.behavior")?;
 
   config.add_layer(layer);
 

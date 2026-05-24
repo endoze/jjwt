@@ -174,9 +174,10 @@ struct Cell {
 impl Cell {
   /// Create a cell with no ANSI styling (plain == display).
   fn raw(s: String) -> Self {
-    let display = s.clone();
-
-    Self { plain: s, display }
+    Self {
+      display: s.clone(),
+      plain: s,
+    }
   }
 
   /// Create a cell with separate plain (for measurement) and display (with ANSI) strings.
@@ -1150,40 +1151,40 @@ fn format_dry_run_line(e: &DryRunEntry<'_>) -> String {
 fn format_dry_run_value(e: &DryRunEntry<'_>) -> Value {
   let mut m = Map::new();
 
-  m.insert("type".into(), Value::String(e.as_type_str().into()));
+  m.insert("type".into(), Value::from(e.as_type_str()));
 
   match e {
     DryRunEntry::WorkspaceAdd { name, path } => {
-      m.insert("name".into(), Value::String((*name).into()));
-      m.insert("path".into(), Value::String(path.display().to_string()));
+      m.insert("name".into(), Value::from(*name));
+      m.insert("path".into(), Value::from(path.display().to_string()));
     }
     DryRunEntry::BookmarkCreate { name, workspace } => {
-      m.insert("name".into(), Value::String((*name).into()));
-      m.insert("workspace".into(), Value::String((*workspace).into()));
+      m.insert("name".into(), Value::from(*name));
+      m.insert("workspace".into(), Value::from(*workspace));
     }
     DryRunEntry::WorkspaceForget { name }
     | DryRunEntry::BookmarkDelete { name }
     | DryRunEntry::WorkspaceUpdateStale { name } => {
-      m.insert("name".into(), Value::String((*name).into()));
+      m.insert("name".into(), Value::from(*name));
     }
     DryRunEntry::DeleteDir { path } | DryRunEntry::DeleteDirBackground { path } => {
-      m.insert("path".into(), Value::String(path.display().to_string()));
+      m.insert("path".into(), Value::from(path.display().to_string()));
     }
     DryRunEntry::WorkspaceRename { old_name, new_name }
     | DryRunEntry::BookmarkRename { old_name, new_name } => {
-      m.insert("old_name".into(), Value::String((*old_name).into()));
-      m.insert("new_name".into(), Value::String((*new_name).into()));
+      m.insert("old_name".into(), Value::from(*old_name));
+      m.insert("new_name".into(), Value::from(*new_name));
     }
     DryRunEntry::RenameDir { from, to } => {
-      m.insert("from".into(), Value::String(from.display().to_string()));
-      m.insert("to".into(), Value::String(to.display().to_string()));
+      m.insert("from".into(), Value::from(from.display().to_string()));
+      m.insert("to".into(), Value::from(to.display().to_string()));
     }
     DryRunEntry::RunHook { name, rendered_cmd } => {
-      m.insert("name".into(), Value::String((*name).into()));
-      m.insert("rendered_cmd".into(), Value::String((*rendered_cmd).into()));
+      m.insert("name".into(), Value::from(*name));
+      m.insert("rendered_cmd".into(), Value::from(*rendered_cmd));
     }
     DryRunEntry::Exec { rendered_cmd } => {
-      m.insert("rendered_cmd".into(), Value::String((*rendered_cmd).into()));
+      m.insert("rendered_cmd".into(), Value::from(*rendered_cmd));
     }
   }
 

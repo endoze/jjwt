@@ -39,8 +39,9 @@ fn hash_command(rendered_cmd: &str) -> String {
 
   hex.push_str("sha256:");
 
-  for b in digest.iter() {
-    write!(hex, "{b:02x}").unwrap();
+  for b in &digest {
+    // write! to a String is infallible; ignore the Result.
+    let _ = write!(hex, "{b:02x}");
   }
 
   hex

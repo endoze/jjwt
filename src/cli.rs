@@ -10,6 +10,7 @@ use crate::core::types::{
   HookSource, ListOptions, OutputFormat as CoreOutputFormat, RemoveArgs, SwitchArgs,
 };
 use crate::shell::cmd;
+use crate::shell::cmd::shell::ShellKind;
 
 /// CLI-level output format selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
@@ -270,6 +271,16 @@ enum HookSourceArg {
   Project,
 }
 
+/// Converts the CLI hook source filter into the core library's `HookSource`.
+impl From<HookSourceArg> for HookSource {
+  fn from(s: HookSourceArg) -> Self {
+    match s {
+      HookSourceArg::User => HookSource::User,
+      HookSourceArg::Project => HookSource::Project,
+    }
+  }
+}
+
 /// Arguments for the `hook` command.
 #[derive(Args)]
 struct HookCmd {
@@ -351,21 +362,20 @@ enum ConfigShellSub {
 /// Arguments for the `config shell init` command.
 #[derive(Args)]
 struct ConfigShellInitCmd {
-  /// Shell name (e.g. `bash`, `zsh`, `fish`).
-  shell: String,
+  /// Shell flavor to emit init code for.
+  #[arg(value_enum)]
+  shell: ShellKind,
 }
 
 /// Parses CLI arguments and dispatches to the appropriate command handler.
 pub fn run() -> Result<()> {
-  let cli = Cli::parse();
+  let mut cli = Cli::parse();
 
-  let cwd_owned;
-  let cwd = if let Some(p) = &cli.chdir {
-    p.as_path()
-  } else {
-    cwd_owned = std::env::current_dir()?;
-    cwd_owned.as_path()
+  let cwd_owned: PathBuf = match cli.chdir.take() {
+    Some(p) => p,
+    None => std::env::current_dir()?,
   };
+  let cwd = cwd_owned.as_path();
 
   let config = cli.config.as_deref();
 
@@ -390,7 +400,6 @@ pub fn run() -> Result<()> {
       config,
       r.names,
       RemoveArgs {
-        name: String::new(),
         force: r.force,
         no_hooks: r.no_hooks || r.no_verify,
         no_delete_branch: r.no_delete_branch,
@@ -411,10 +420,7 @@ pub fn run() -> Result<()> {
     ),
     Cmd::Hook(h) => {
       if h.show {
-        let source_filter = h.source.map(|s| match s {
-          HookSourceArg::User => HookSource::User,
-          HookSourceArg::Project => HookSource::Project,
-        });
+        let source_filter = h.source.map(HookSource::from);
 
         cmd::hook_show::run(cwd, config, h.expanded, h.format.into(), source_filter)
       } else {
@@ -429,7 +435,7 @@ pub fn run() -> Result<()> {
     Cmd::Config(c) => match c.sub {
       ConfigSub::Check => cmd::config_check::run(cwd, config),
       ConfigSub::Shell(s) => match s.sub {
-        ConfigShellSub::Init(i) => cmd::shell::dispatch(&i.shell),
+        ConfigShellSub::Init(i) => cmd::shell::dispatch(i.shell),
         ConfigShellSub::Completions(c) => {
           clap_complete::generate(c.shell, &mut Cli::command(), "jjwt", &mut std::io::stdout());
 

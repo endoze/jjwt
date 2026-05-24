@@ -66,7 +66,7 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, dry_run: bool) -> Result<()> 
   let repo_name = obs
     .repo_root
     .file_name()
-    .map(|n| n.to_string_lossy().to_string())
+    .map(|n| n.to_string_lossy().into_owned())
     .unwrap_or_default();
 
   let vars = LlmPromptVars {
