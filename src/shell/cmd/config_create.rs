@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::shell::config_loader::user_config_dir;
 
@@ -51,7 +51,7 @@ pub fn run(cwd: &Path, project: bool, user: bool) -> Result<()> {
   Ok(())
 }
 
-fn write_config(dir: &Path, dest: &PathBuf, template: &str) -> Result<()> {
+fn write_config(dir: &Path, dest: &Path, template: &str) -> Result<()> {
   std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
   std::fs::write(dest, template).with_context(|| format!("write {}", dest.display()))?;
 

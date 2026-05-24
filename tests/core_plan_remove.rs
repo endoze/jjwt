@@ -19,7 +19,6 @@ fn remove_emits_pre_remove_then_actions_then_post_remove() {
     ..Default::default()
   });
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: true,
     no_hooks: false,
     no_delete_branch: false,
@@ -39,7 +38,7 @@ fn remove_emits_pre_remove_then_actions_then_post_remove() {
     ..Default::default()
   };
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
   let kinds: Vec<&'static str> = plan
     .actions
     .iter()
@@ -70,7 +69,6 @@ fn remove_emits_pre_remove_then_actions_then_post_remove() {
 fn no_delete_branch_keeps_bookmark_even_when_merged() {
   let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
-    name: "feat-x".into(),
     no_delete_branch: true,
     ..Default::default()
   };
@@ -86,7 +84,7 @@ fn no_delete_branch_keeps_bookmark_even_when_merged() {
     target_bookmark_merged: true,
     ..Default::default()
   };
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
 
   assert!(
     !plan
@@ -100,7 +98,6 @@ fn no_delete_branch_keeps_bookmark_even_when_merged() {
 fn force_delete_removes_unmerged_bookmark() {
   let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force_delete: true,
     ..Default::default()
   };
@@ -116,7 +113,7 @@ fn force_delete_removes_unmerged_bookmark() {
     target_bookmark_merged: false,
     ..Default::default()
   };
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
 
   assert!(
     plan
@@ -160,7 +157,6 @@ fn obs_existing(name: &str, dirty: bool, merged: bool, bookmark_exists: bool) ->
 fn remove_merged_bookmark_emits_full_sequence() {
   let cfg = cfg();
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: false,
     no_hooks: false,
     no_delete_branch: false,
@@ -170,7 +166,7 @@ fn remove_merged_bookmark_emits_full_sequence() {
   };
   let obs = obs_existing("feat-x", false, true, true);
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
   let ws_path = PathBuf::from("/repo/.worktrees/feat-x");
 
   let Action::RunHook {
@@ -217,7 +213,6 @@ fn remove_merged_bookmark_emits_full_sequence() {
 fn remove_unmerged_bookmark_errors_without_force() {
   let cfg = cfg();
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: false,
     no_hooks: false,
     no_delete_branch: false,
@@ -227,7 +222,7 @@ fn remove_unmerged_bookmark_errors_without_force() {
   };
   let obs = obs_existing("feat-x", false, false, true);
 
-  let err = plan_remove(&cfg, &args, &obs).unwrap_err();
+  let err = plan_remove(&cfg, "feat-x", &args, &obs).unwrap_err();
   assert!(matches!(err, CoreError::BookmarkUnmerged(_)));
 }
 
@@ -235,7 +230,6 @@ fn remove_unmerged_bookmark_errors_without_force() {
 fn remove_unmerged_bookmark_with_force_skips_bookmark_delete() {
   let cfg = cfg();
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: true,
     no_hooks: false,
     no_delete_branch: false,
@@ -245,7 +239,7 @@ fn remove_unmerged_bookmark_with_force_skips_bookmark_delete() {
   };
   let obs = obs_existing("feat-x", false, false, true);
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
   assert!(
     !plan
       .actions
@@ -264,7 +258,6 @@ fn remove_unmerged_bookmark_with_force_skips_bookmark_delete() {
 fn remove_dirty_without_force_errors() {
   let cfg = cfg();
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: false,
     no_hooks: false,
     no_delete_branch: false,
@@ -274,7 +267,7 @@ fn remove_dirty_without_force_errors() {
   };
   let obs = obs_existing("feat-x", true, true, true);
 
-  let err = plan_remove(&cfg, &args, &obs).unwrap_err();
+  let err = plan_remove(&cfg, "feat-x", &args, &obs).unwrap_err();
   assert!(matches!(err, CoreError::WorkspaceDirty(_)));
 }
 
@@ -282,7 +275,6 @@ fn remove_dirty_without_force_errors() {
 fn remove_dirty_with_force_proceeds() {
   let cfg = cfg();
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: true,
     no_hooks: false,
     no_delete_branch: false,
@@ -292,7 +284,7 @@ fn remove_dirty_with_force_proceeds() {
   };
   let obs = obs_existing("feat-x", true, true, true);
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
   assert!(
     plan
       .actions
@@ -317,7 +309,6 @@ fn remove_dirty_with_force_proceeds() {
 fn remove_missing_workspace_errors() {
   let cfg = cfg();
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: false,
     no_hooks: false,
     no_delete_branch: false,
@@ -328,7 +319,7 @@ fn remove_missing_workspace_errors() {
   let mut obs = obs_existing("feat-x", false, true, true);
   obs.workspaces.clear();
 
-  let err = plan_remove(&cfg, &args, &obs).unwrap_err();
+  let err = plan_remove(&cfg, "feat-x", &args, &obs).unwrap_err();
   assert!(matches!(err, CoreError::WorkspaceMissing(_)));
 }
 
@@ -336,7 +327,6 @@ fn remove_missing_workspace_errors() {
 fn remove_no_bookmark_skips_delete() {
   let cfg = cfg();
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: false,
     no_hooks: false,
     no_delete_branch: false,
@@ -346,7 +336,7 @@ fn remove_no_bookmark_skips_delete() {
   };
   let obs = obs_existing("feat-x", false, true, false);
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
   assert!(
     !plan
       .actions
@@ -362,7 +352,6 @@ fn background_remove_emits_delete_dir_background() {
     ..Default::default()
   });
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: true,
     ..Default::default()
   };
@@ -379,7 +368,7 @@ fn background_remove_emits_delete_dir_background() {
     ..Default::default()
   };
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
 
   let has_bg_delete = plan
     .actions
@@ -398,7 +387,6 @@ fn background_remove_emits_delete_dir_background() {
 fn sync_remove_when_background_not_configured() {
   let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: true,
     ..Default::default()
   };
@@ -415,7 +403,7 @@ fn sync_remove_when_background_not_configured() {
     ..Default::default()
   };
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
 
   let has_sync_delete = plan
     .actions
@@ -429,7 +417,6 @@ fn sync_remove_when_background_not_configured() {
 fn remove_json_format_emits_json_with_bookmark_deleted_true() {
   let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: true,
     format: OutputFormat::Json,
     ..Default::default()
@@ -447,7 +434,7 @@ fn remove_json_format_emits_json_with_bookmark_deleted_true() {
     ..Default::default()
   };
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
 
   let json_line = plan
     .actions
@@ -456,7 +443,7 @@ fn remove_json_format_emits_json_with_bookmark_deleted_true() {
       Action::PrintLine(s) => Some(s.clone()),
       _ => None,
     })
-    .last();
+    .next_back();
 
   let parsed: serde_json::Value =
     serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");
@@ -470,7 +457,6 @@ fn remove_json_format_emits_json_with_bookmark_deleted_true() {
 fn remove_json_format_bookmark_deleted_false_when_no_delete_branch() {
   let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
-    name: "feat-x".into(),
     no_delete_branch: true,
     format: OutputFormat::Json,
     ..Default::default()
@@ -488,7 +474,7 @@ fn remove_json_format_bookmark_deleted_false_when_no_delete_branch() {
     ..Default::default()
   };
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
 
   let json_line = plan
     .actions
@@ -497,7 +483,7 @@ fn remove_json_format_bookmark_deleted_false_when_no_delete_branch() {
       Action::PrintLine(s) => Some(s.clone()),
       _ => None,
     })
-    .last();
+    .next_back();
 
   let parsed: serde_json::Value =
     serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");
@@ -509,7 +495,6 @@ fn remove_json_format_bookmark_deleted_false_when_no_delete_branch() {
 fn remove_text_format_does_not_emit_json() {
   let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
-    name: "feat-x".into(),
     force: true,
     format: OutputFormat::Text,
     ..Default::default()
@@ -527,7 +512,7 @@ fn remove_text_format_does_not_emit_json() {
     ..Default::default()
   };
 
-  let plan = plan_remove(&cfg, &args, &obs).expect("plan ok");
+  let plan = plan_remove(&cfg, "feat-x", &args, &obs).expect("plan ok");
 
   let has_json = plan.actions.iter().any(|a| match a {
     Action::PrintLine(s) => s.starts_with('{'),
@@ -541,7 +526,6 @@ fn remove_text_format_does_not_emit_json() {
 fn remove_not_jj_repo_errors() {
   let cfg = MergedConfig::from_project(Config::default());
   let args = RemoveArgs {
-    name: "feat-x".into(),
     ..Default::default()
   };
   let obs = ObservedState {
@@ -549,7 +533,7 @@ fn remove_not_jj_repo_errors() {
     ..Default::default()
   };
 
-  let err = plan_remove(&cfg, &args, &obs).unwrap_err();
+  let err = plan_remove(&cfg, "feat-x", &args, &obs).unwrap_err();
 
   assert!(matches!(err, CoreError::NotJjRepo));
 }

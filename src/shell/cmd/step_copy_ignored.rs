@@ -25,7 +25,6 @@ pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
     Some(d) => d.to_string(),
     None => obs
       .current_workspace
-      .clone()
       .ok_or_else(|| anyhow::anyhow!("not inside a workspace (specify destination explicitly)"))?,
   };
 
@@ -63,7 +62,7 @@ pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
       .strip_prefix(source_path)
       .expect("walk yields children of root");
 
-    if tracked.contains(&rel.to_path_buf()) {
+    if tracked.contains(rel) {
       continue;
     }
 
