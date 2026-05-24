@@ -33,11 +33,13 @@ impl Jj for FakeJj {
     Ok(vec![])
   }
 
-  fn workspace_add(&self, _r: &Path, n: &str, p: &Path) -> Result<()> {
+  fn workspace_add(&self, _r: &Path, n: &str, p: &Path, rev: Option<&str>) -> Result<()> {
+    let rev_str = rev.map(|r| format!(" @{r}")).unwrap_or_default();
+
     self
       .calls
       .borrow_mut()
-      .push(format!("workspace_add {n} {}", p.display()));
+      .push(format!("workspace_add {n} {}{rev_str}", p.display()));
 
     Ok(())
   }
@@ -247,6 +249,7 @@ fn execute_runs_actions_in_order() {
       Action::JjWorkspaceAdd {
         name: "x".into(),
         path: PathBuf::from("/repo/.worktrees/x"),
+        revision: None,
       },
       Action::JjBookmarkCreate {
         name: "x".into(),

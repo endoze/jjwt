@@ -16,7 +16,7 @@ pub fn observe<J: Jj, F: Fs>(
   fs: &F,
   start_dir: &Path,
   target_name: Option<&str>,
-  worktree_path_template: Option<&str>,
+  worktree_path_template: &str,
 ) -> Result<ObservedState> {
   let repo_root = match jj.repo_root(start_dir) {
     Ok(r) => r,
@@ -31,6 +31,7 @@ pub fn observe<J: Jj, F: Fs>(
         target_bookmark_merged: false,
         target_bookmark_exists: false,
         target_resolved_workspace: None,
+        trunk_bookmark: None,
       });
     }
   };
@@ -46,16 +47,18 @@ pub fn observe<J: Jj, F: Fs>(
   let mut target_resolved_workspace = None;
 
   if let Some(name) = target_name {
-    let target_path = if let Some(tmpl) = worktree_path_template {
+    let target_path = {
       let ctx = crate::core::types::RenderContext {
         branch: name.into(),
+        repo: repo_root
+          .file_name()
+          .map(|n| n.to_string_lossy().into_owned()),
+        repo_path: Some(repo_root.clone()),
         ..Default::default()
       };
-      let rendered = crate::core::template::render(tmpl, &ctx)?;
+      let rendered = crate::core::template::render(worktree_path_template, &ctx)?;
 
       repo_root.join(rendered)
-    } else {
-      repo_root.join(".worktrees").join(name)
     };
 
     target_path_exists = fs.exists(&target_path);
@@ -75,6 +78,8 @@ pub fn observe<J: Jj, F: Fs>(
     }
   }
 
+  let trunk_bookmark = jj.trunk_bookmark(&repo_root).unwrap_or(None);
+
   Ok(ObservedState {
     repo_root,
     is_jj_repo: true,
@@ -85,6 +90,7 @@ pub fn observe<J: Jj, F: Fs>(
     target_bookmark_merged,
     target_bookmark_exists,
     target_resolved_workspace,
+    trunk_bookmark,
   })
 }
 

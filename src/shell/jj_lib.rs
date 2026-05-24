@@ -26,12 +26,21 @@ pub struct JjLib {
   repo: RwLock<Arc<ReadonlyRepo>>,
   /// Absolute path to the repo root directory.
   repo_root: PathBuf,
+  /// Worktree-path template for resolving workspace directories.
+  worktree_path_template: String,
 }
 
 impl JjLib {
   /// Load the jj repo at or above `start`, snapshotting all workspaces.
+  /// Uses the default worktree-path template.
   pub fn new(start: &Path) -> Result<Self> {
+    Self::with_template(start, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)
+  }
+
+  /// Load the jj repo with a custom worktree-path template.
+  pub fn with_template(start: &Path, template: &str) -> Result<Self> {
     let repo_root = find_repo_root(start)?;
+    let worktree_path_template = template.to_string();
     let settings = minimal_settings()?;
     let store_factories = StoreFactories::default();
     let wc_factories = default_working_copy_factories();
@@ -49,7 +58,7 @@ impl JjLib {
         .view()
         .wc_commit_ids()
         .keys()
-        .map(|ws| workspace_dir(&repo_root, ws.as_str()))
+        .map(|ws| workspace_dir(&repo_root, ws.as_str(), &worktree_path_template))
         .collect();
 
       for dir in &ws_dirs {
@@ -66,6 +75,7 @@ impl JjLib {
     Ok(Self {
       repo: RwLock::new(repo),
       repo_root,
+      worktree_path_template,
     })
   }
 
@@ -184,11 +194,15 @@ impl Jj for JjLib {
     let repo = self.repo();
     let wc_ids = repo.view().wc_commit_ids();
     let trunk_name = self.resolve_trunk();
+    let current_op_id = repo.op_id();
+    let settings = minimal_settings()?;
+    let store_factories = StoreFactories::default();
+    let wc_factories = default_working_copy_factories();
     let mut workspaces = Vec::with_capacity(wc_ids.len());
 
     for ws_name in wc_ids.keys() {
       let internal_name = ws_name.as_str().to_string();
-      let path = workspace_dir(&self.repo_root, &internal_name);
+      let path = workspace_dir(&self.repo_root, &internal_name, &self.worktree_path_template);
 
       // Display the default workspace using the trunk bookmark name
       // (e.g. "master" or "main") to match worktrunk's behavior.
@@ -198,17 +212,28 @@ impl Jj for JjLib {
         internal_name
       };
 
+      let stale = path.is_dir()
+        && Workspace::load(&settings, &path, &store_factories, &wc_factories)
+          .map(|ws| ws.working_copy().operation_id() != current_op_id)
+          .unwrap_or(false);
+
       workspaces.push(types::Workspace {
         name: display_name,
         path,
-        stale: false,
+        stale,
       });
     }
 
     Ok(workspaces)
   }
 
-  fn workspace_add(&self, _repo_root: &Path, name: &str, path: &Path) -> Result<()> {
+  fn workspace_add(
+    &self,
+    _repo_root: &Path,
+    name: &str,
+    path: &Path,
+    revision: Option<&str>,
+  ) -> Result<()> {
     std::fs::create_dir_all(path).context("failed to create workspace dir")?;
 
     let repo = self.repo();
@@ -224,6 +249,33 @@ impl Jj for JjLib {
     .context("workspace add failed")?;
 
     self.swap_repo(new_repo);
+
+    if let Some(rev) = revision {
+      let repo = self.repo();
+      let ref_name = RefName::new(rev);
+      let commit_id = repo
+        .view()
+        .get_local_bookmark(ref_name)
+        .as_normal()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("bookmark '{rev}' not found"))?;
+      let commit = self.get_commit(&commit_id)?;
+
+      let mut tx = repo.start_transaction();
+      let ws_name = WorkspaceNameBuf::from(name);
+
+      pollster::block_on(tx.repo_mut().check_out(ws_name, &commit))
+        .context("failed to check out revision")?;
+
+      pollster::block_on(tx.repo_mut().rebase_descendants())
+        .context("failed to rebase descendants")?;
+
+      let new_repo =
+        pollster::block_on(tx.commit(format!("check out {rev} in workspace {name}")))
+          .context("transaction commit failed")?;
+
+      self.swap_repo(new_repo);
+    }
 
     Ok(())
   }
@@ -248,7 +300,7 @@ impl Jj for JjLib {
   fn workspace_update_stale(&self, repo_root: &Path, name: &str) -> Result<()> {
     // Complex jj-internal logic. Fall back to subprocess.
     let jj_path = which::which("jj").context("jj not found")?;
-    let ws_path = workspace_dir(repo_root, name);
+    let ws_path = workspace_dir(repo_root, name, &self.worktree_path_template);
 
     let out = std::process::Command::new(&jj_path)
       .current_dir(&ws_path)

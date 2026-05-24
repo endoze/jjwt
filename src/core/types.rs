@@ -4,6 +4,11 @@ use std::fmt;
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Default worktree-path template. Matches worktrunk's default: places
+/// worktrees as siblings of the repository root.
+pub const DEFAULT_WORKTREE_PATH_TEMPLATE: &str =
+  "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}";
+
 /// Errors produced by core planning and configuration logic.
 #[derive(Debug, Error)]
 pub enum CoreError {
@@ -254,7 +259,7 @@ impl HookSet<SourcedHookGroup> {
 }
 
 /// User and project configs merged into a single effective configuration.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MergedConfig {
   /// List subcommand settings (URL template, summary toggle).
   pub list: Option<ListConfig>,
@@ -264,10 +269,25 @@ pub struct MergedConfig {
   pub background_remove: Option<bool>,
   /// Custom subcommand aliases (name to template).
   pub aliases: IndexMap<String, String>,
-  /// Minijinja template for workspace directory paths.
-  pub worktree_path_template: Option<String>,
+  /// Minijinja template for workspace directory paths. Always populated;
+  /// defaults to `DEFAULT_WORKTREE_PATH_TEMPLATE` when neither config
+  /// layer provides a value.
+  pub worktree_path_template: String,
   /// LLM commit-message generation settings.
   pub commit: Option<CommitConfig>,
+}
+
+impl Default for MergedConfig {
+  fn default() -> Self {
+    Self {
+      list: None,
+      hooks: HookSet::default(),
+      background_remove: None,
+      aliases: IndexMap::new(),
+      worktree_path_template: DEFAULT_WORKTREE_PATH_TEMPLATE.to_string(),
+      commit: None,
+    }
+  }
 }
 
 impl MergedConfig {
@@ -284,7 +304,10 @@ impl MergedConfig {
 
     let list = p.list.or(u.list);
     let background_remove = p.background_remove.or(u.background_remove);
-    let worktree_path_template = p.worktree_path_template.or(u.worktree_path_template);
+    let worktree_path_template = p
+      .worktree_path_template
+      .or(u.worktree_path_template)
+      .unwrap_or_else(|| DEFAULT_WORKTREE_PATH_TEMPLATE.to_string());
     let commit = p.commit.or(u.commit);
 
     let mut aliases = u.aliases;
@@ -354,7 +377,7 @@ impl MergedConfig {
       post_remove: raw.post_remove,
       background_remove: self.background_remove,
       aliases: self.aliases.clone(),
-      worktree_path_template: self.worktree_path_template.clone(),
+      worktree_path_template: Some(self.worktree_path_template.clone()),
       commit: self.commit.clone(),
       projects: HashMap::new(),
     }
@@ -461,6 +484,9 @@ pub struct ObservedState {
   /// case it resolves to "default". Mirrors worktrunk's behavior of using
   /// the default branch name to address the root worktree.
   pub target_resolved_workspace: Option<String>,
+  /// Name of the trunk bookmark (e.g. "main", "master"). Used as the
+  /// default base revision when creating workspaces.
+  pub trunk_bookmark: Option<String>,
 }
 
 /// A single step in an execution plan produced by the planner.
@@ -472,6 +498,10 @@ pub enum Action {
     name: String,
     /// On-disk path for the new workspace.
     path: PathBuf,
+    /// Base revision (bookmark name) to check out after creation. When
+    /// set, the new workspace's `@` is reparented from root onto this
+    /// revision.
+    revision: Option<String>,
   },
   /// Create a jj bookmark pointing at the workspace's working copy.
   JjBookmarkCreate {
@@ -606,6 +636,9 @@ pub struct SwitchArgs {
   /// creating the workspace. Worktrunk's `--clobber`. Refused when the
   /// stale path lives inside another registered workspace.
   pub clobber: bool,
+  /// Base revision (bookmark name, etc.) for the new workspace. When
+  /// omitted, defaults to the trunk bookmark. Only used with `--create`.
+  pub base: Option<String>,
   /// Only show what would be done without actually doing it.
   pub dry_run: bool,
   /// Output format (text, JSON, or statusline).
@@ -903,6 +936,8 @@ pub struct ListRow {
   pub name: String,
   /// Absolute on-disk path of the workspace (empty for `Branch` rows).
   pub path: PathBuf,
+  /// Relative display path for the list table (e.g. ".", "./sibling.feat").
+  pub display_path: String,
   /// Whether this row represents a workspace or a standalone branch.
   pub kind: ListRowKind,
   /// Rendered from `[list].url`; "" if no config.

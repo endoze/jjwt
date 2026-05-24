@@ -11,8 +11,15 @@ pub trait Jj {
   fn repo_root(&self, start: &Path) -> Result<std::path::PathBuf>;
   /// Enumerate workspaces with name, path, and stale flag.
   fn workspace_list(&self, repo_root: &Path) -> Result<Vec<Workspace>>;
-  /// `jj workspace add --name <name> <path>`
-  fn workspace_add(&self, repo_root: &Path, name: &str, path: &Path) -> Result<()>;
+  /// `jj workspace add --name <name> <path>`, optionally checking out a
+  /// specific revision instead of the root changeset.
+  fn workspace_add(
+    &self,
+    repo_root: &Path,
+    name: &str,
+    path: &Path,
+    revision: Option<&str>,
+  ) -> Result<()>;
   /// `jj workspace forget <name>`
   fn workspace_forget(&self, repo_root: &Path, name: &str) -> Result<()>;
   /// `jj workspace update-stale` for the named workspace
@@ -133,12 +140,23 @@ pub(crate) fn find_repo_root(start: &Path) -> Result<std::path::PathBuf> {
   Ok(p)
 }
 
-/// Compute the path to a workspace directory. For "default", this is repo_root;
-/// for other workspaces, it is repo_root/.worktrees/<name>.
-pub(crate) fn workspace_dir(repo_root: &Path, name: &str) -> std::path::PathBuf {
+/// Compute the path to a workspace directory by rendering the worktree-path
+/// template. For "default", this is always `repo_root`.
+pub(crate) fn workspace_dir(repo_root: &Path, name: &str, template: &str) -> std::path::PathBuf {
   if name == "default" {
-    repo_root.to_path_buf()
-  } else {
-    repo_root.join(".worktrees").join(name)
+    return repo_root.to_path_buf();
   }
+
+  let ctx = crate::core::types::RenderContext {
+    branch: name.into(),
+    repo: repo_root
+      .file_name()
+      .map(|n| n.to_string_lossy().into_owned()),
+    repo_path: Some(repo_root.to_path_buf()),
+    ..Default::default()
+  };
+
+  crate::core::template::render(template, &ctx)
+    .map(|rendered| repo_root.join(rendered))
+    .unwrap_or_else(|_| repo_root.join(name))
 }

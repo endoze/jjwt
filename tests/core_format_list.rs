@@ -7,13 +7,21 @@ use jjwt::core::types::*;
 use std::path::PathBuf;
 
 fn row(name: &str) -> ListRow {
+  let path = PathBuf::from(if name == "default" {
+    "/repo".to_string()
+  } else {
+    format!("/repo/.worktrees/{name}")
+  });
+  let display_path = if name == "default" {
+    ".".to_string()
+  } else {
+    format!("./.worktrees/{name}")
+  };
+
   ListRow {
     name: name.into(),
-    path: PathBuf::from(if name == "default" {
-      "/repo".to_string()
-    } else {
-      format!("/repo/.worktrees/{name}")
-    }),
+    path,
+    display_path,
     kind: ListRowKind::Workspace,
     url: String::new(),
     is_current: false,
@@ -780,6 +788,7 @@ fn list_json_bookmark_row_kind() {
   let r = ListRow {
     name: "orphan".into(),
     path: PathBuf::new(),
+    display_path: String::new(),
     kind: ListRowKind::Bookmark,
     url: String::new(),
     is_current: false,
@@ -965,6 +974,7 @@ fn bookmark_row_uses_slash_gutter_and_empty_path() {
   let bookmark = ListRow {
     name: "orphan".into(),
     path: PathBuf::new(),
+    display_path: String::new(),
     kind: ListRowKind::Bookmark,
     url: String::new(),
     is_current: false,
@@ -1169,6 +1179,7 @@ fn dry_run_workspace_add() {
   let actions = vec![Action::JjWorkspaceAdd {
     name: "feat".into(),
     path: PathBuf::from("/repo/.worktrees/feat"),
+    revision: None,
   }];
 
   let out = format_dry_run(&actions);
@@ -1320,6 +1331,7 @@ fn dry_run_json_workspace_add() {
   let actions = vec![Action::JjWorkspaceAdd {
     name: "feat".into(),
     path: PathBuf::from("/repo/.worktrees/feat"),
+    revision: None,
   }];
 
   let out = format_dry_run_json(&actions);

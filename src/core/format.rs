@@ -558,8 +558,7 @@ fn gutter_char(row: &ListRow) -> char {
 fn format_path(row: &ListRow) -> String {
   match row.kind {
     ListRowKind::Bookmark => String::new(),
-    ListRowKind::Workspace if row.is_default => ".".to_string(),
-    ListRowKind::Workspace => format!("./.worktrees/{}", row.name),
+    ListRowKind::Workspace => row.display_path.clone(),
   }
 }
 
@@ -1091,7 +1090,7 @@ impl DryRunEntry<'_> {
 /// (e.g. `PrintLine`).
 fn dry_run_entry(action: &Action) -> Option<DryRunEntry<'_>> {
   match action {
-    Action::JjWorkspaceAdd { name, path } => Some(DryRunEntry::WorkspaceAdd { name, path }),
+    Action::JjWorkspaceAdd { name, path, .. } => Some(DryRunEntry::WorkspaceAdd { name, path }),
     Action::JjBookmarkCreate { name, workspace } => {
       Some(DryRunEntry::BookmarkCreate { name, workspace })
     }

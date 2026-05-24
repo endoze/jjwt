@@ -197,6 +197,10 @@ struct SwitchCmd {
   /// Remove a stale directory at the target workspace path before creating.
   #[arg(long)]
   clobber: bool,
+  /// Base revision for the new workspace (bookmark name, change ID, etc.).
+  /// Defaults to the trunk bookmark. Only used with --create.
+  #[arg(short = 'b', long, requires = "create")]
+  base: Option<String>,
   /// Skip configured hooks for this invocation.
   #[arg(long = "no-hooks")]
   no_hooks: bool,
@@ -376,6 +380,7 @@ pub fn run() -> Result<()> {
         no_hooks: s.no_hooks || s.no_verify,
         execute: s.execute,
         clobber: s.clobber,
+        base: s.base,
         dry_run: s.dry_run,
         format: s.format.into(),
       },

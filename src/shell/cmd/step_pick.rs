@@ -18,7 +18,7 @@ pub fn run(cwd: &Path) -> Result<()> {
 
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None, None)?;
+  let obs = observe(&jj, &fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
 
   if obs.workspaces.is_empty() {
     anyhow::bail!("no workspaces found");

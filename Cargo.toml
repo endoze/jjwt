@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/endoze/jjwt"
 documentation = "https://docs.rs/jjwt"
 homepage = "https://github.com/endoze/jjwt"
-rust-version = "1.86.0"
+rust-version = "1.89.0"
 keywords = ["jujutsu", "jj", "workspace", "cli", "worktree"]
 categories = ["command-line-utilities", "development-tools"]
 

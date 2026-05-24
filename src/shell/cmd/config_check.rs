@@ -51,9 +51,7 @@ pub fn run(cwd: &Path, config_path: Option<&Path>) -> Result<()> {
   }
 
   // 4. Validate worktree-path template.
-  if let Some(ref tmpl) = cfg.worktree_path_template {
-    check(tmpl, "worktree-path template: invalid");
-  }
+  check(&cfg.worktree_path_template, "worktree-path template: invalid");
 
   // 5. Validate list URL template.
   if let Some(ref list) = cfg.list {
