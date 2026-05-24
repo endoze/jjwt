@@ -22,7 +22,7 @@ pub fn run(
 ) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)?;
 
-  let jj = JjLib::new(cwd)?;
+  let jj = JjLib::with_template(cwd, &cfg.worktree_path_template)?;
   let fs = RealFs;
   let proc = RealProc;
 
@@ -32,7 +32,7 @@ pub fn run(
       &fs,
       cwd,
       None,
-      cfg.worktree_path_template.as_deref(),
+      &cfg.worktree_path_template,
     )?)
   } else {
     None

@@ -61,8 +61,13 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
 
   for action in &plan.actions {
     match action {
-      Action::JjWorkspaceAdd { name, path } => {
-        rt.jj.workspace_add(&rt.repo_root, name, path)?;
+      Action::JjWorkspaceAdd {
+        name,
+        path,
+        revision,
+      } => {
+        rt.jj
+          .workspace_add(&rt.repo_root, name, path, revision.as_deref())?;
       }
       Action::JjBookmarkCreate { name, workspace } => {
         rt.jj.bookmark_create(&rt.repo_root, name, workspace)?;

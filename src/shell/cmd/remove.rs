@@ -24,7 +24,7 @@ pub fn run(
 ) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)?;
 
-  let jj = JjLib::new(cwd)?;
+  let jj = JjLib::with_template(cwd, &cfg.worktree_path_template)?;
 
   // Best-effort: clean up stale background-remove trash.
   if cfg.background_remove == Some(true)
@@ -39,7 +39,7 @@ pub fn run(
   let resolved_names: Vec<String> = if names.is_empty() {
     // Default to the current workspace. Reuse observe()'s containment
     // logic so the rule matches `list` and the alias dispatch.
-    let obs0 = observe(&jj, &fs, cwd, None, cfg.worktree_path_template.as_deref())?;
+    let obs0 = observe(&jj, &fs, cwd, None, &cfg.worktree_path_template)?;
     let current = obs0.current_workspace.clone().ok_or_else(|| {
       anyhow::anyhow!("no workspace specified and cwd is not inside a known workspace")
     })?;
@@ -57,7 +57,7 @@ pub fn run(
       &rt.fs,
       cwd,
       Some(&name),
-      cfg.worktree_path_template.as_deref(),
+      &cfg.worktree_path_template,
     )?;
 
     rt.repo_root = obs.repo_root.clone();

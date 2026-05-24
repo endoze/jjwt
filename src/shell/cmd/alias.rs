@@ -22,10 +22,10 @@ pub fn run(
 ) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)
     .with_context(|| format!("alias '{name}': locate config"))?;
-  let jj = JjLib::new(cwd)?;
+  let jj = JjLib::with_template(cwd, &cfg.worktree_path_template)?;
   let fs = RealFs;
   let proc = RealProc;
-  let obs = observe(&jj, &fs, cwd, None, cfg.worktree_path_template.as_deref())?;
+  let obs = observe(&jj, &fs, cwd, None, &cfg.worktree_path_template)?;
   let args = AliasArgs { name, forwarded };
   let plan = plan_alias(&cfg, &args, &obs)?;
   let repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);

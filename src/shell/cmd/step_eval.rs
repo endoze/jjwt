@@ -15,7 +15,7 @@ use crate::shell::observe::observe;
 pub fn run(cwd: &Path, template: &str) -> Result<()> {
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None, None)?;
+  let obs = observe(&jj, &fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
   let (branch, ws_path) = match obs.current_workspace.as_deref() {
     Some(name) => obs
       .workspaces

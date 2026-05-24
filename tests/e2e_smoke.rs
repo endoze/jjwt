@@ -79,12 +79,15 @@ sentinel = "echo {{ branch }} > sentinel.txt"
   let stdout = String::from_utf8(out.stdout).unwrap();
   let printed_path = stdout.lines().last().unwrap().trim();
 
+  let repo_name = repo.file_name().unwrap().to_string_lossy();
+  let expected_suffix = format!("{repo_name}.test-branch");
+
   assert!(
-    printed_path.ends_with(".worktrees/test-branch"),
-    "expected workspace path on last line, got: {stdout:?}"
+    printed_path.ends_with(&expected_suffix),
+    "expected workspace path ending with '{expected_suffix}', got: {stdout:?}"
   );
 
-  let ws_path = repo.join(".worktrees/test-branch");
+  let ws_path = repo.parent().unwrap().join(&expected_suffix);
 
   assert!(ws_path.is_dir(), "workspace dir missing: {ws_path:?}");
 
@@ -192,7 +195,13 @@ url = "http://example.com/{{ branch }}"
   );
 
   // Dirty the alpha workspace.
-  std::fs::write(repo.join(".worktrees/alpha/scratch.txt"), "scratch").unwrap();
+  let alpha_name = format!(
+    "{}.alpha",
+    repo.file_name().unwrap().to_string_lossy()
+  );
+  let alpha_path = repo.parent().unwrap().join(&alpha_name);
+
+  std::fs::write(alpha_path.join("scratch.txt"), "scratch").unwrap();
 
   // Compact list (without --full): hides CI, URL, Commit, Age, Summary.
   let list_out = Command::new(jjwt_bin())
@@ -309,7 +318,11 @@ fn list_works_from_inside_a_workspace_subdir() {
   );
 
   std::fs::create_dir_all(repo.join(".config")).unwrap();
-  std::fs::write(repo.join(".config/wt.toml"), "").unwrap();
+  std::fs::write(
+    repo.join(".config/wt.toml"),
+    "worktree-path = \".worktrees/{{ branch | sanitize }}\"\n",
+  )
+  .unwrap();
 
   let out = Command::new(jjwt_bin())
     .arg("-C")

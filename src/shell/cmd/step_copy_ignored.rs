@@ -13,7 +13,7 @@ use crate::shell::observe::observe;
 pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None, None)?;
+  let obs = observe(&jj, &fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
 
   let source_ws = obs
     .workspaces
@@ -91,11 +91,11 @@ pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
 
 /// List all tracked files in a workspace via `jj file list`.
 fn tracked_files(repo_root: &Path, workspace: &str) -> Result<HashSet<PathBuf>> {
-  let ws_path = if workspace == "default" {
-    repo_root.to_path_buf()
-  } else {
-    repo_root.join(".worktrees").join(workspace)
-  };
+  let ws_path = crate::shell::jj::workspace_dir(
+    repo_root,
+    workspace,
+    crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE,
+  );
 
   let output = std::process::Command::new("jj")
     .current_dir(&ws_path)

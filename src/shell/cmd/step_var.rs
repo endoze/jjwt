@@ -74,7 +74,7 @@ pub fn run_delete(cwd: &Path, key: &str) -> Result<()> {
 fn resolve_workspace(cwd: &Path) -> Result<(String, std::path::PathBuf)> {
   let jj = JjLib::new(cwd)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None, None)?;
+  let obs = observe(&jj, &fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
 
   let workspace = obs
     .current_workspace

@@ -35,7 +35,7 @@ fn relocate_emits_rename_actions() {
     a,
     Action::RenameDir { from, to }
       if from == &PathBuf::from("/repo/.worktrees/feat-a")
-        && to == &PathBuf::from("/repo/.worktrees/feat-b")
+        && to == &PathBuf::from("/repo/../repo.feat-b")
   )));
   assert!(
     !plan
@@ -162,7 +162,7 @@ fn relocate_json_format_emits_json_object() {
   assert_eq!(parsed["old_name"], "feat-a");
   assert_eq!(parsed["new_name"], "feat-b");
   assert_eq!(parsed["old_path"], "/repo/.worktrees/feat-a");
-  assert_eq!(parsed["new_path"], "/repo/.worktrees/feat-b");
+  assert_eq!(parsed["new_path"], "/repo/../repo.feat-b");
   assert_eq!(parsed["bookmark_renamed"], true);
 }
 

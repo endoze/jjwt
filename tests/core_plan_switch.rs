@@ -38,6 +38,7 @@ fn create_emits_pre_switch_then_workspace_then_pre_post_start_then_print_then_po
     .map(|a| match a {
       Action::JjWorkspaceAdd { .. } => "add",
       Action::JjBookmarkCreate { .. } => "bookmark",
+      Action::JjWorkspaceUpdateStale { .. } => "update-stale",
       Action::RunHook { env, .. } => env
         .iter()
         .find(|(k, _)| k == "JJWT_HOOK_TYPE")
@@ -60,6 +61,7 @@ fn create_emits_pre_switch_then_workspace_then_pre_post_start_then_print_then_po
       "pre-switch",
       "add",
       "bookmark",
+      "update-stale",
       "pre-start",
       "post-start",
       "print",
@@ -101,19 +103,21 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    base: None,
     dry_run: false,
     format: Default::default(),
   };
   let obs = observed_clean();
 
   let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
-  let ws_path = PathBuf::from("/repo/.worktrees/feat-x");
+  let ws_path = PathBuf::from("/repo/../repo.feat-x");
 
   assert_eq!(
     plan.actions[0],
     Action::JjWorkspaceAdd {
       name: "feat-x".into(),
       path: ws_path.clone(),
+      revision: None,
     }
   );
   assert_eq!(
@@ -123,6 +127,12 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
       workspace: "feat-x".into(),
     }
   );
+  assert_eq!(
+    plan.actions[2],
+    Action::JjWorkspaceUpdateStale {
+      name: "feat-x".into(),
+    }
+  );
 
   let Action::RunHook {
     name: n0,
@@ -130,7 +140,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     cwd: cwd0,
     env: env0,
     ..
-  } = &plan.actions[2]
+  } = &plan.actions[3]
   else {
     panic!("expected RunHook");
   };
@@ -148,7 +158,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     name: n1,
     rendered_cmd: c1,
     ..
-  } = &plan.actions[3]
+  } = &plan.actions[4]
   else {
     panic!("expected RunHook");
   };
@@ -162,7 +172,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     name: n2,
     rendered_cmd: c2,
     ..
-  } = &plan.actions[4]
+  } = &plan.actions[5]
   else {
     panic!("expected RunHook");
   };
@@ -170,10 +180,10 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
   assert_eq!(c2, "make db-start");
 
   assert_eq!(
-    plan.actions[5],
+    plan.actions[6],
     Action::PrintLine(ws_path.display().to_string())
   );
-  assert_eq!(plan.actions.len(), 6);
+  assert_eq!(plan.actions.len(), 7);
 }
 
 #[test]
@@ -186,13 +196,14 @@ fn create_errors_if_workspace_already_exists() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    base: None,
     dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.workspaces.push(Workspace {
     name: "feat-x".into(),
-    path: PathBuf::from("/repo/.worktrees/feat-x"),
+    path: PathBuf::from("/repo/../repo.feat-x"),
     stale: false,
   });
 
@@ -210,6 +221,7 @@ fn create_errors_if_not_a_jj_repo() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    base: None,
     dry_run: false,
     format: Default::default(),
   };
@@ -230,13 +242,14 @@ fn switch_existing_no_create_emits_only_print() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    base: None,
     dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.workspaces.push(Workspace {
     name: "feat-x".into(),
-    path: PathBuf::from("/repo/.worktrees/feat-x"),
+    path: PathBuf::from("/repo/../repo.feat-x"),
     stale: false,
   });
 
@@ -244,7 +257,7 @@ fn switch_existing_no_create_emits_only_print() {
   assert_eq!(
     plan.actions,
     vec![Action::PrintLine(
-      PathBuf::from("/repo/.worktrees/feat-x")
+      PathBuf::from("/repo/../repo.feat-x")
         .display()
         .to_string()
     )]
@@ -261,13 +274,14 @@ fn switch_existing_stale_emits_update_stale_then_print() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    base: None,
     dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.workspaces.push(Workspace {
     name: "feat-x".into(),
-    path: PathBuf::from("/repo/.worktrees/feat-x"),
+    path: PathBuf::from("/repo/../repo.feat-x"),
     stale: true,
   });
 
@@ -292,13 +306,14 @@ fn switch_existing_with_rerun_hooks_reruns_them() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    base: None,
     dry_run: false,
     format: Default::default(),
   };
   let mut obs = observed_clean();
   obs.workspaces.push(Workspace {
     name: "feat-x".into(),
-    path: PathBuf::from("/repo/.worktrees/feat-x"),
+    path: PathBuf::from("/repo/../repo.feat-x"),
     stale: false,
   });
 
@@ -320,6 +335,7 @@ fn switch_missing_without_create_errors() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    base: None,
     dry_run: false,
     format: Default::default(),
   };
@@ -339,6 +355,7 @@ fn switch_trunk_bookmark_name_routes_to_default_workspace() {
     no_hooks: false,
     execute: None,
     clobber: false,
+    base: None,
     dry_run: false,
     format: Default::default(),
   };
@@ -392,8 +409,35 @@ fn create_with_custom_worktree_path_template() {
 }
 
 #[test]
-fn create_without_template_uses_default_worktrees_dir() {
+fn create_without_template_uses_default_sibling_dir() {
   let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let add_path = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { path, .. } => Some(path.clone()),
+    _ => None,
+  });
+
+  assert_eq!(add_path, Some(PathBuf::from("/repo/../repo.feat-x")));
+}
+
+#[test]
+fn create_with_nested_worktrees_template() {
+  let cfg = MergedConfig::from_project(Config {
+    worktree_path_template: Some(".worktrees/{{ branch | sanitize }}".into()),
+    ..Default::default()
+  });
   let args = SwitchArgs {
     name: "feat-x".into(),
     create: true,
@@ -469,7 +513,7 @@ fn create_json_format_emits_json_object() {
     serde_json::from_str(&json_line.expect("should have PrintLine")).expect("valid json");
 
   assert_eq!(parsed["name"], "feat-x");
-  assert_eq!(parsed["path"], "/repo/.worktrees/feat-x");
+  assert_eq!(parsed["path"], "/repo/../repo.feat-x");
   assert_eq!(parsed["created"], true);
   assert!(parsed.get("execute").is_none());
 }
@@ -491,7 +535,7 @@ fn switch_existing_json_format_emits_json_with_created_false() {
 
   obs.workspaces.push(Workspace {
     name: "feat-x".into(),
-    path: PathBuf::from("/repo/.worktrees/feat-x"),
+    path: PathBuf::from("/repo/../repo.feat-x"),
     stale: false,
   });
 
@@ -624,7 +668,10 @@ fn create_without_clobber_errors_when_path_exists() {
 
 #[test]
 fn clobber_inside_other_workspace_errors() {
-  let cfg = MergedConfig::from_project(Config::default());
+  let cfg = MergedConfig::from_project(Config {
+    worktree_path_template: Some("nested/{{ branch | sanitize }}".into()),
+    ..Default::default()
+  });
   let args = SwitchArgs {
     name: "feat-x".into(),
     create: true,
@@ -637,7 +684,7 @@ fn clobber_inside_other_workspace_errors() {
     target_path_exists: true,
     workspaces: vec![Workspace {
       name: "other".into(),
-      path: PathBuf::from("/repo/.worktrees"),
+      path: PathBuf::from("/repo/nested"),
       stale: false,
     }],
     ..Default::default()
@@ -666,7 +713,7 @@ fn switch_existing_with_no_hooks_skips_hooks() {
 
   obs.workspaces.push(Workspace {
     name: "feat-x".into(),
-    path: PathBuf::from("/repo/.worktrees/feat-x"),
+    path: PathBuf::from("/repo/../repo.feat-x"),
     stale: false,
   });
 
@@ -705,4 +752,79 @@ fn create_default_workspace_name_uses_repo_root() {
   });
 
   assert_eq!(add_path, Some(PathBuf::from("/repo")));
+}
+
+#[test]
+fn create_with_explicit_base_passes_revision() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    base: Some("develop".into()),
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let revision = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { revision, .. } => Some(revision.clone()),
+    _ => None,
+  });
+
+  assert_eq!(revision, Some(Some("develop".into())));
+}
+
+#[test]
+fn create_without_base_defaults_to_trunk_bookmark() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    trunk_bookmark: Some("main".into()),
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let revision = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { revision, .. } => Some(revision.clone()),
+    _ => None,
+  });
+
+  assert_eq!(revision, Some(Some("main".into())));
+}
+
+#[test]
+fn create_without_base_and_no_trunk_passes_none() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    trunk_bookmark: None,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let revision = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { revision, .. } => Some(revision.clone()),
+    _ => None,
+  });
+
+  assert_eq!(revision, Some(None));
 }

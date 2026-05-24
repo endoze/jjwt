@@ -5,23 +5,22 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Compute the on-disk path for a workspace, using the template if configured.
-fn workspace_path(root: &Path, name: &str, template: Option<&str>) -> Result<PathBuf, CoreError> {
+/// Compute the on-disk path for a workspace by rendering the worktree-path
+/// template from config.
+fn workspace_path(root: &Path, name: &str, template: &str) -> Result<PathBuf, CoreError> {
   if name == "default" {
     return Ok(root.to_path_buf());
   }
 
-  if let Some(tmpl) = template {
-    let ctx = RenderContext {
-      branch: name.into(),
-      ..Default::default()
-    };
-    let rendered = render(tmpl, &ctx)?;
+  let ctx = RenderContext {
+    branch: name.into(),
+    repo: root.file_name().map(|n| n.to_string_lossy().into_owned()),
+    repo_path: Some(root.to_path_buf()),
+    ..Default::default()
+  };
+  let rendered = render(template, &ctx)?;
 
-    Ok(root.join(rendered))
-  } else {
-    Ok(root.join(".worktrees").join(name))
-  }
+  Ok(root.join(rendered))
 }
 
 /// Build the environment variable list injected into hook subprocesses.
@@ -151,7 +150,7 @@ fn plan_switch_create(
   let ws_path = workspace_path(
     &obs.repo_root,
     &args.name,
-    cfg.worktree_path_template.as_deref(),
+    &cfg.worktree_path_template,
   )?;
 
   let mut plan = Plan::new();
@@ -192,13 +191,22 @@ fn plan_switch_create(
     &obs.repo_root,
   )?;
 
+  let revision = args
+    .base
+    .clone()
+    .or_else(|| obs.trunk_bookmark.clone());
+
   plan.push(Action::JjWorkspaceAdd {
     name: args.name.clone(),
     path: ws_path.clone(),
+    revision,
   });
   plan.push(Action::JjBookmarkCreate {
     name: args.name.clone(),
     workspace: args.name.clone(),
+  });
+  plan.push(Action::JjWorkspaceUpdateStale {
+    name: args.name.clone(),
   });
 
   plan.extend_hooks(
@@ -611,7 +619,7 @@ pub fn plan_relocate(
   let new_path = workspace_path(
     &obs.repo_root,
     &args.new_name,
-    cfg.worktree_path_template.as_deref(),
+    &cfg.worktree_path_template,
   )?;
 
   let mut plan = Plan::new();
@@ -824,9 +832,19 @@ fn build_list_row(
     vs_trunk: trunk_rel(obs_row.ahead, obs_row.behind),
   };
 
+  let display_path = if is_default {
+    ".".to_string()
+  } else {
+    w.path
+      .strip_prefix(repo_root)
+      .map(|rel| format!("./{}", rel.display()))
+      .unwrap_or_else(|_| w.path.display().to_string())
+  };
+
   Ok(ListRow {
     name: w.name.clone(),
     path: w.path.clone(),
+    display_path,
     kind: ListRowKind::Workspace,
     url,
     is_current,
@@ -855,6 +873,7 @@ fn build_bookmark_row(name: &str) -> ListRow {
   ListRow {
     name: name.into(),
     path: PathBuf::new(),
+    display_path: String::new(),
     kind: ListRowKind::Bookmark,
     url: String::new(),
     is_current: false,

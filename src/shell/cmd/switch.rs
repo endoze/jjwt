@@ -94,7 +94,7 @@ fn resolve_shortcut<J: Jj, F: crate::shell::fs::Fs>(
   jj: &J,
   fs: &F,
 ) -> Result<(String, Option<String>)> {
-  let probe = observe(jj, fs, cwd, None, None)?;
+  let probe = observe(jj, fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
   let cur = probe.current_workspace;
 
   let resolved = match name {
@@ -147,7 +147,7 @@ fn should_auto_create<J: Jj, F: crate::shell::fs::Fs>(
   resolved_name: &str,
   original_name: &str,
 ) -> Result<bool> {
-  let probe = observe(jj, fs, cwd, Some(resolved_name), None)?;
+  let probe = observe(jj, fs, cwd, Some(resolved_name), crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
   let ws_exists = probe.workspaces.iter().any(|w| w.name == resolved_name);
 
   if ws_exists {
@@ -174,7 +174,7 @@ fn should_auto_create<J: Jj, F: crate::shell::fs::Fs>(
 pub fn run(cwd: &Path, config_path: Option<&Path>, mut args: SwitchArgs) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)?;
 
-  let jj = JjLib::new(cwd)?;
+  let jj = JjLib::with_template(cwd, &cfg.worktree_path_template)?;
 
   // Best-effort: clean up stale background-remove trash.
   if cfg.background_remove == Some(true)
@@ -198,6 +198,12 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, mut args: SwitchArgs) -> Resu
 
   let (resolved_name, current_before) = resolve_shortcut(&args.name, cwd, &jj, &fs)?;
 
+  if let Some(ref base) = args.base {
+    let (resolved_base, _) = resolve_shortcut(base, cwd, &jj, &fs)?;
+
+    args.base = Some(resolved_base);
+  }
+
   args.create = args.create || should_auto_create(&jj, &fs, cwd, &resolved_name, &args.name)?;
   args.name = resolved_name;
 
@@ -206,7 +212,7 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, mut args: SwitchArgs) -> Resu
     &fs,
     cwd,
     Some(&args.name),
-    cfg.worktree_path_template.as_deref(),
+    &cfg.worktree_path_template,
   )?;
   let plan = plan_switch(&cfg, &args, &obs)?;
 
