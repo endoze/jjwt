@@ -10,10 +10,10 @@ A workspace manager for [jujutsu](https://martinvonz.github.io/jj/) repositories
 cargo install jjwt
 ```
 
-Or install the latest from master:
+### Homebrew
 
 ```sh
-cargo install --git https://github.com/endoze/jjwt
+brew install endoze/tap/jjwt
 ```
 
 ### Nix
@@ -44,13 +44,9 @@ Or run directly without installing:
 nix run github:endoze/jjwt
 ```
 
-### Homebrew
+## Shell setup
 
-```sh
-brew install endoze/tap/jjwt
-```
-
-Then set up your shell:
+Regardless of how you installed jjwt, set up your shell so `wt switch` can `cd` into the target workspace:
 
 ```sh
 # Fish
@@ -63,9 +59,9 @@ eval "$(jjwt config shell init bash)"
 eval "$(jjwt config shell init zsh)"
 ```
 
-This creates a `wt` shell function that wraps `jjwt` so that `wt switch` can `cd` into the target workspace.
+This creates a `wt` shell function that wraps `jjwt`.
 
-### Shell completions
+### Completions
 
 ```sh
 # Fish
@@ -121,10 +117,12 @@ jjwt switch mr:12               # checkout a GitLab MR by number
 | Flag | Description |
 |------|-------------|
 | `-c, --create` | Create workspace and bookmark from scratch |
+| `-b, --base <rev>` | Base revision for the new workspace (requires `--create`; defaults to trunk) |
 | `-x, --execute <cmd>` | Run a template-rendered command after switching |
 | `--clobber` | Remove stale directory at target path |
 | `--rerun-hooks` | Re-run start hooks even when workspace exists |
 | `--no-hooks` | Skip all hooks |
+| `--dry-run` | Show what would be done without doing it |
 | `--format json` | Output as JSON |
 
 ### `remove [names...]`
@@ -137,6 +135,7 @@ Remove one or more workspaces. Omit names to remove the current workspace.
 | `-D, --force-delete` | Delete bookmark even if not merged into trunk |
 | `--no-delete-branch` | Keep bookmark even when merged |
 | `--no-hooks` | Skip all hooks |
+| `--dry-run` | Show what would be done without doing it |
 | `--format json` | Output as JSON |
 
 ### `list`
@@ -145,7 +144,7 @@ Show all workspaces with status, diff stats, and trunk relationship.
 
 ```sh
 jjwt list                       # table view
-jjwt list --branches            # include bookmarks without workspaces
+jjwt list --bookmarks           # include bookmarks without workspaces
 jjwt list --remotes             # include remote-only bookmarks
 jjwt list --full                # add CI status + LLM summaries
 jjwt list --format json         # machine-readable output
@@ -164,6 +163,14 @@ jjwt hook --show                # list all configured hooks
 jjwt hook --show --expanded     # show hooks with templates rendered
 jjwt hook --show --source user  # show only user-level hooks
 jjwt hook --var KEY=VAL         # inject extra template variables
+```
+
+### `doctor`
+
+Check environment and configuration health.
+
+```sh
+jjwt doctor
 ```
 
 ### `config`
@@ -189,9 +196,8 @@ Low-level tools for scripting and automation.
 | `step for-each -- <cmd>` | Run command in every workspace |
 | `step tether -- <cmd>` | Run command tied to current workspace lifecycle |
 | `step prune [--dry-run]` | Remove all workspaces merged into trunk |
-| `step relocate <old> <new>` | Rename workspace and move its directory |
+| `step relocate <old> <new> [--rename-bookmark]` | Rename workspace and move its directory |
 | `step describe [--dry-run]` | Generate a commit message with an LLM |
-| `step diff [args...]` | Show diff against trunk (`jj diff -r trunk()..@`) |
 | `step pick` | Interactive workspace picker with preview |
 | `step copy-ignored <src> [dest]` | Copy jj-ignored files between workspaces (CoW) |
 | `step var set/get/list/delete` | Manage per-workspace template variables |
