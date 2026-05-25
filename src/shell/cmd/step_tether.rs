@@ -47,7 +47,9 @@ pub fn run(cwd: &Path, argv: Vec<String>) -> Result<i32> {
 /// are safe because the pgid is guaranteed valid by construction.
 #[cfg(unix)]
 struct ProcessGroup {
+  /// The spawned child process handle.
   child: std::process::Child,
+  /// Process group id (equal to the child's pid since the child is its own group leader).
   pgid: libc::pid_t,
 }
 

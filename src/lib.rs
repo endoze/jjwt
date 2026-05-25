@@ -1,4 +1,6 @@
-//! jjwt — a workspace-management tool for Jujutsu (jj).
+//!
+#![doc = include_str!("../README.md")]
+#![deny(missing_docs)]
 
 /// CLI argument definitions and command dispatch.
 pub mod cli;

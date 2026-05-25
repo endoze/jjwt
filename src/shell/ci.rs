@@ -35,6 +35,8 @@ pub fn query_ci_statuses(repo_root: &Path, bookmarks: &[String]) -> HashMap<Stri
   result
 }
 
+/// Populate `result` with one entry per bookmark, looking up the CI status
+/// in `statuses` and defaulting to `CiStatus::None` for misses.
 fn fill_statuses(
   result: &mut HashMap<String, CiStatus>,
   bookmarks: &[String],

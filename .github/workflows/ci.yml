@@ -3,6 +3,10 @@ name: Tests
 on:
   push:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -11,23 +15,21 @@ jobs:
     name: Tests and Coverage
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin:develop-nightly
+      image: xd009642/tarpaulin:0.35.4-nightly@sha256:29651aae15140adc538a7d5a5cb5020240caf14e15a191a4f16c6902ccc021f8
       options: --security-opt seccomp=unconfined
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
           toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Generate code coverage
-        run: |
-          cargo tarpaulin --engine llvm --out lcov
-      - name: Coveralls GitHub Action
-        uses: coverallsapp/github-action@v2
+        run: cargo tarpaulin --engine llvm --out lcov
+      - name: Coveralls
+        uses: coverallsapp/github-action@648a8eb78e6d50909eff900e4ec85cab4524a45b # v2.3.6
         with:
           github-token: ${{ github.token }}
       - name: Install cargo-crap
-        run: |
-          cargo binstall cargo-crap --no-confirm || cargo install cargo-crap
+        run: cargo binstall cargo-crap --no-confirm || cargo install cargo-crap
       - name: Run CRAP analysis
-        run: |
-          cargo crap --lcov lcov.info --format github
+        run: cargo crap --lcov lcov.info --format github

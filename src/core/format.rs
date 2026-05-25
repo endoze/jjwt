@@ -1022,46 +1022,76 @@ pub fn format_statusline(rows: &[ListRow], current: Option<&str>) -> String {
 /// both the human-readable and JSON formatters. Each variant carries
 /// only the fields relevant to its action type.
 enum DryRunEntry<'a> {
+  /// Add a new jj workspace at a target path.
   WorkspaceAdd {
+    /// Workspace name.
     name: &'a str,
+    /// Filesystem path where the workspace will be created.
     path: &'a std::path::Path,
   },
+  /// Create a new jj bookmark pointing at a workspace's working copy.
   BookmarkCreate {
+    /// Bookmark name.
     name: &'a str,
+    /// Workspace whose working copy the bookmark will point at.
     workspace: &'a str,
   },
+  /// Forget an existing jj workspace (does not delete files on disk).
   WorkspaceForget {
+    /// Workspace name to forget.
     name: &'a str,
   },
+  /// Delete a jj bookmark.
   BookmarkDelete {
+    /// Bookmark name to delete.
     name: &'a str,
   },
+  /// Refresh the working-copy commit for a stale workspace.
   WorkspaceUpdateStale {
+    /// Workspace name to update.
     name: &'a str,
   },
+  /// Delete a directory synchronously.
   DeleteDir {
+    /// Directory to delete.
     path: &'a std::path::Path,
   },
+  /// Rename the directory to a trash path and delete it in the background.
   DeleteDirBackground {
+    /// Directory to delete in the background.
     path: &'a std::path::Path,
   },
+  /// Rename a jj workspace.
   WorkspaceRename {
+    /// Current workspace name.
     old_name: &'a str,
+    /// New workspace name.
     new_name: &'a str,
   },
+  /// Move a directory on disk.
   RenameDir {
+    /// Source path.
     from: &'a std::path::Path,
+    /// Destination path.
     to: &'a std::path::Path,
   },
+  /// Rename a jj bookmark.
   BookmarkRename {
+    /// Current bookmark name.
     old_name: &'a str,
+    /// New bookmark name.
     new_name: &'a str,
   },
+  /// Run a configured hook command.
   RunHook {
+    /// Hook name (e.g. `pre-switch.setup`).
     name: &'a str,
+    /// Fully template-rendered command string that will be executed.
     rendered_cmd: &'a str,
   },
+  /// Execute a user-supplied command (e.g. from `switch -x`).
   Exec {
+    /// Fully template-rendered command string.
     rendered_cmd: &'a str,
   },
 }

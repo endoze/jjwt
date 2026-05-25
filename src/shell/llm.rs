@@ -100,23 +100,43 @@ pub fn render_prompt(
 }
 
 /// Pipe a rendered prompt to the configured command via stdin, return stdout.
-/// Returns `None` on failure (command not found, non-zero exit, empty output).
+/// Returns `None` on failure (command not found, non-zero exit, empty output);
+/// a short diagnostic is printed to stderr so users can tell which case fired.
 pub fn run_llm_command(command: &str, prompt: &str) -> Option<String> {
-  let mut child = Command::new("sh")
+  let mut child = match Command::new("sh")
     .args(["-c", command])
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::inherit())
     .spawn()
-    .ok()?;
+  {
+    Ok(c) => c,
+    Err(e) => {
+      eprintln!("jjwt: failed to spawn LLM command (`{command}`): {e}");
+
+      return None;
+    }
+  };
 
   if let Some(mut stdin) = child.stdin.take() {
     let _ = stdin.write_all(prompt.as_bytes());
   }
 
-  let output = child.wait_with_output().ok()?;
+  let output = match child.wait_with_output() {
+    Ok(o) => o,
+    Err(e) => {
+      eprintln!("jjwt: LLM command I/O error: {e}");
+
+      return None;
+    }
+  };
 
   if !output.status.success() {
+    eprintln!(
+      "jjwt: LLM command exited with status {} (`{command}`)",
+      output.status
+    );
+
     return None;
   }
 
@@ -124,6 +144,8 @@ pub fn run_llm_command(command: &str, prompt: &str) -> Option<String> {
   let trimmed = text.trim().to_string();
 
   if trimmed.is_empty() {
+    eprintln!("jjwt: LLM command produced no output");
+
     return None;
   }
 

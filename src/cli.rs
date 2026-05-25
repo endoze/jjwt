@@ -89,7 +89,10 @@ struct StepCmd {
 #[derive(Subcommand)]
 enum StepSub {
   /// Render a template expression and print the result.
-  Eval { template: String },
+  Eval {
+    /// Template source string to render.
+    template: String,
+  },
   /// Run a command in every workspace (tokens template-rendered per workspace).
   ForEach {
     /// Command to run; everything after `--` is captured.
@@ -151,6 +154,7 @@ enum StepSub {
   },
   /// Manage per-workspace variables (stored in `.jj/jjwt-state.toml`).
   Var {
+    /// `var` sub-subcommand (set / get / list / delete).
     #[command(subcommand)]
     sub: VarSub,
   },

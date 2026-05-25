@@ -12,6 +12,20 @@ homepage = "https://github.com/endoze/jjwt"
 rust-version = "1.89.0"
 keywords = ["jujutsu", "jj", "workspace", "cli", "worktree"]
 categories = ["command-line-utilities", "development-tools"]
+exclude = [
+  ".cargo-crap.toml",
+  ".github/",
+  ".gitignore",
+  ".config/",
+  "cliff.toml",
+  "dist-workspace.toml",
+  "flake.nix",
+  "lcov.info",
+  "release-plz.toml",
+  "fixtures/",
+  "docs/",
+  "tests/",
+]
 
 [features]
 default = ["picker"]

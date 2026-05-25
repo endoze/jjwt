@@ -7,6 +7,12 @@ A workspace manager for [jujutsu](https://martinvonz.github.io/jj/) repositories
 ### Cargo
 
 ```sh
+cargo install jjwt
+```
+
+Or install the latest from master:
+
+```sh
 cargo install --git https://github.com/endoze/jjwt
 ```
 
@@ -168,6 +174,7 @@ Manage jjwt configuration.
 jjwt config create --project    # scaffold .config/wt.toml
 jjwt config create --user       # scaffold ~/.config/jjwt/config.toml
 jjwt config show                # display resolved config (both layers)
+jjwt config check               # validate config syntax and template references
 jjwt config shell init fish     # emit shell wrapper function
 jjwt config shell completions <shell> # emit shell completion script
 ```
@@ -255,6 +262,6 @@ Project-sourced hooks require approval on first run (stored in `~/.config/jjwt/a
 
 ## License
 
-MIT licensed. See [LICENSE](LICENSE) for details.
+MIT licensed. See [LICENSE](https://github.com/endoze/jjwt/blob/master/LICENSE) for details.
 
 Some template filters were ported from [worktrunk](https://github.com/max-sixty/worktrunk) by Maximilian Roos (MIT / Apache-2.0). Attribution is preserved in the respective source files.

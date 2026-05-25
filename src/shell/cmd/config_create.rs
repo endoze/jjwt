@@ -6,7 +6,8 @@ use std::path::Path;
 
 use crate::shell::config_loader::user_config_dir;
 
-const PROJECT_TEMPLATE: &str = include_str!("../../../fixtures/wt.example.toml");
+/// Bundled starter template used for both `--project` and `--user` configs.
+const PROJECT_TEMPLATE: &str = include_str!("config_template.toml");
 
 /// Write a starter config file. Exactly one of `--project` or `--user` must
 /// be passed.  When neither flag is given and stdin is a TTY, prompt
@@ -51,6 +52,7 @@ pub fn run(cwd: &Path, project: bool, user: bool) -> Result<()> {
   Ok(())
 }
 
+/// Create the parent directory and write `template` to `dest`.
 fn write_config(dir: &Path, dest: &Path, template: &str) -> Result<()> {
   std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
   std::fs::write(dest, template).with_context(|| format!("write {}", dest.display()))?;
@@ -60,6 +62,8 @@ fn write_config(dir: &Path, dest: &Path, template: &str) -> Result<()> {
   Ok(())
 }
 
+/// Interactively ask the user whether to create a project or user config;
+/// returns `(project, user)` flags.
 fn prompt_config_type() -> Result<(bool, bool)> {
   eprintln!("Create config for:");
   eprintln!("  (p)roject  .config/wt.toml");

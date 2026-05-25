@@ -608,10 +608,12 @@ impl Plan {
 /// is oblivious to the format choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
+  /// Human-readable plain text (default).
   #[default]
   Text,
+  /// Machine-readable JSON (single line per record).
   Json,
-  /// Compact one-line summary for status displays (e.g. Claude Code).
+  /// Compact one-line summary for status displays.
   Statusline,
 }
 
