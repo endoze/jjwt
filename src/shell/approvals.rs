@@ -70,16 +70,17 @@ fn save_file(path: &Path, file: &ApprovalsFile) -> Result<()> {
   Ok(())
 }
 
-/// Check whether a rendered hook command is already approved for a given
-/// repo identity.
-pub fn is_approved(repo_id: &str, rendered_cmd: &str) -> bool {
+/// Check whether a hook template is already approved for a given repo
+/// identity. The hash is computed over the raw (unrendered) template so
+/// approval persists across worktree-specific expansions.
+pub fn is_approved(repo_id: &str, raw_cmd: &str) -> bool {
   let path = match approvals_path() {
     Ok(p) => p,
     Err(_) => return false,
   };
 
   let file = load_file(&path);
-  let hash = hash_command(rendered_cmd);
+  let hash = hash_command(raw_cmd);
 
   file
     .projects
@@ -87,11 +88,11 @@ pub fn is_approved(repo_id: &str, rendered_cmd: &str) -> bool {
     .is_some_and(|pa| pa.approved_commands.contains(&hash))
 }
 
-/// Record an approved command for a repo identity.
-pub fn save_approval(repo_id: &str, rendered_cmd: &str) -> Result<()> {
+/// Record an approved hook template for a repo identity.
+pub fn save_approval(repo_id: &str, raw_cmd: &str) -> Result<()> {
   let path = approvals_path()?;
   let mut file = load_file(&path);
-  let hash = hash_command(rendered_cmd);
+  let hash = hash_command(raw_cmd);
 
   let entry = file.projects.entry(repo_id.to_string()).or_default();
 
@@ -102,11 +103,13 @@ pub fn save_approval(repo_id: &str, rendered_cmd: &str) -> Result<()> {
   save_file(&path, &file)
 }
 
-/// Prompt the user on a TTY to approve a project hook command. Returns
-/// `Ok(true)` when approved, `Ok(false)` when denied.
+/// Prompt the user on a TTY to approve a project hook template. Shows
+/// both the raw template (what is being approved) and the rendered
+/// command that will run right now. Returns `Ok(true)` when approved,
+/// `Ok(false)` when denied.
 ///
 /// Errors if stdin is not a terminal (non-interactive mode).
-pub fn prompt_approval(hook_name: &str, rendered_cmd: &str) -> Result<bool> {
+pub fn prompt_approval(hook_name: &str, raw_cmd: &str, rendered_cmd: &str) -> Result<bool> {
   use std::io::IsTerminal;
 
   if !std::io::stdin().is_terminal() {
@@ -117,9 +120,14 @@ pub fn prompt_approval(hook_name: &str, rendered_cmd: &str) -> Result<bool> {
   }
 
   eprintln!("\n\x1b[1;33m⚠ Project hook requires approval\x1b[0m");
-  eprintln!("  hook:    {hook_name}");
-  eprintln!("  command: {rendered_cmd}");
-  eprint!("\nAllow this command? [y/N] ");
+  eprintln!("  hook:     {hook_name}");
+  eprintln!("  template: {raw_cmd}");
+
+  if rendered_cmd != raw_cmd {
+    eprintln!("  rendered: {rendered_cmd}");
+  }
+
+  eprint!("\nAllow this hook template? [y/N] ");
 
   std::io::stderr().flush()?;
 

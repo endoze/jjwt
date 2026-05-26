@@ -150,12 +150,6 @@ pub fn normalize_remote_url(url: &str) -> Option<String> {
   Some(path.to_string())
 }
 
-/// Find the jj repo root by walking upward from `start` looking for a
-/// `.jj/` directory.
-fn find_repo_root(start: &Path) -> Option<PathBuf> {
-  crate::shell::jj::find_nearest_jj_dir(start)
-}
-
 /// Load and merge both config layers into a single `MergedConfig`.
 ///
 /// - User config (`~/.config/jjwt/config.toml`) is optional.
@@ -176,7 +170,9 @@ pub fn load_merged_config(cwd: &Path, override_path: Option<&Path>) -> Result<Me
     Err(e) => return Err(e),
   };
 
-  let repo_id = find_repo_root(cwd).and_then(|root| resolve_repo_identity(&root));
+  let repo_id = crate::shell::jj::find_repo_root(cwd)
+    .ok()
+    .and_then(|root| resolve_repo_identity(&root));
 
   Ok(MergedConfig::from_layers_with_project_id(
     user_cfg.as_ref(),

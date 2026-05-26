@@ -1,7 +1,10 @@
 #![cfg(not(tarpaulin_include))]
 
 use anyhow::{Result, anyhow};
+use std::io::IsTerminal;
+use std::path::Path;
 
+use crate::core::highlight::highlight_bash_with_gutter;
 use crate::core::types::{Action, HookSource, Plan};
 use crate::shell::fs::Fs;
 use crate::shell::jj::Jj;
@@ -108,23 +111,23 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
       }
       Action::RunHook {
         name,
+        raw_cmd,
         rendered_cmd,
         cwd,
         env,
         source,
       } => {
         if *source == HookSource::Project {
-          check_approval(rt, name, rendered_cmd)?;
+          check_approval(rt, name, raw_cmd, rendered_cmd)?;
         }
 
-        let out = rt.proc.run_sh(rendered_cmd, cwd, env)?;
+        announce_hook(name, env, rendered_cmd, cwd);
 
-        if out.status != 0 {
+        let status = rt.proc.run_sh_streamed(rendered_cmd, cwd, env)?;
+
+        if status != 0 {
           return Err(anyhow!(
-            "hook '{name}' failed (status {}): {}\nstderr: {}",
-            out.status,
-            rendered_cmd,
-            out.stderr
+            "hook '{name}' failed (status {status}): {rendered_cmd}"
           ));
         }
       }
@@ -148,6 +151,39 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
   Ok(printed)
 }
 
+/// Enable ANSI color on hook feedback iff stderr is a terminal and `NO_COLOR`
+/// is unset. Hook feedback always goes to stderr (stdout is captured by the
+/// shell wrapper), so the terminal check targets stderr, not stdout.
+fn use_color_stderr() -> bool {
+  if std::env::var_os("NO_COLOR").is_some() {
+    return false;
+  }
+
+  std::io::stderr().is_terminal()
+}
+
+/// Print a hook's announce line and syntax-highlighted command to stderr
+/// before running it, so the user can see which command is executing and
+/// follow its streamed output. All writes target stderr to avoid corrupting
+/// the stdout directives the shell wrapper parses.
+fn announce_hook(name: &str, env: &[(String, String)], rendered_cmd: &str, cwd: &Path) {
+  let color = use_color_stderr();
+  let hook_type = env
+    .iter()
+    .find(|(k, _)| k == "JJWT_HOOK_TYPE")
+    .map(|(_, v)| v.as_str())
+    .unwrap_or("hook");
+  let header = format!("◎ Running {hook_type}:{name} @ {}", cwd.display());
+
+  if color {
+    eprintln!("\x1b[36m{header}\x1b[0m");
+  } else {
+    eprintln!("{header}");
+  }
+
+  eprintln!("{}", highlight_bash_with_gutter(rendered_cmd, color));
+}
+
 /// Check whether a project-sourced hook command is approved. If not,
 /// prompt the user (interactive) or error (non-interactive). Approved
 /// commands are persisted for future runs.
@@ -157,6 +193,7 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
 fn check_approval<J: Jj, F: Fs, P: Proc>(
   rt: &Runtime<J, F, P>,
   hook_name: &str,
+  raw_cmd: &str,
   rendered_cmd: &str,
 ) -> Result<()> {
   use crate::shell::approvals;
@@ -170,7 +207,7 @@ fn check_approval<J: Jj, F: Fs, P: Proc>(
     None => return Ok(()),
   };
 
-  if approvals::is_approved(repo_id, rendered_cmd) {
+  if approvals::is_approved(repo_id, raw_cmd) {
     return Ok(());
   }
 
@@ -181,8 +218,8 @@ fn check_approval<J: Jj, F: Fs, P: Proc>(
     );
   }
 
-  if approvals::prompt_approval(hook_name, rendered_cmd)? {
-    approvals::save_approval(repo_id, rendered_cmd)?;
+  if approvals::prompt_approval(hook_name, raw_cmd, rendered_cmd)? {
+    approvals::save_approval(repo_id, raw_cmd)?;
 
     Ok(())
   } else {

@@ -28,8 +28,10 @@ exclude = [
 ]
 
 [features]
-default = ["picker"]
+default = ["picker", "syntax-highlighting"]
 picker = ["dep:skim"]
+# Syntax-highlight hook commands echoed before execution (requires tree-sitter).
+syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
 
 [lib]
 path = "src/lib.rs"
@@ -60,6 +62,12 @@ serde_json = "1"
 sha2 = "0.11"
 skim = { version = "0.11", optional = true }
 thiserror = "2"
+# Syntax highlighting for hook command echoes (feature `syntax-highlighting`).
+# tree-sitter and tree-sitter-highlight track matching versions; tree-sitter-bash
+# may lag behind (0.25.x works with tree-sitter 0.26.x).
+tree-sitter = { version = "0.26", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
+tree-sitter-highlight = { version = "0.26", optional = true }
 toml = { version = "1", features = ["preserve_order"] }
 pollster = "0.4"
 tokio = { version = "1", features = ["io-util"] }

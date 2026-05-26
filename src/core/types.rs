@@ -560,6 +560,10 @@ pub enum Action {
   RunHook {
     /// Named key of the hook inside its group.
     name: String,
+    /// Raw (unrendered) hook template as written in config. Used as the
+    /// stable approval key so worktree-specific template expansions don't
+    /// trigger re-prompting.
+    raw_cmd: String,
     /// Fully rendered shell command string.
     rendered_cmd: String,
     /// Working directory for the hook subprocess.

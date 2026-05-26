@@ -86,6 +86,7 @@ fn render_hook_group(
 
       out.push(Action::RunHook {
         name: name.clone(),
+        raw_cmd: tmpl.clone(),
         rendered_cmd: rendered,
         cwd: ws_path.to_path_buf(),
         env: hook_env(branch, ws_path, hook_type, name, shg.source),
@@ -582,6 +583,7 @@ pub fn plan_hook(
 
   plan.push(Action::RunHook {
     name: args.name.clone(),
+    raw_cmd: tmpl.to_string(),
     rendered_cmd: rendered,
     cwd: ws.path.clone(),
     env: hook_env(

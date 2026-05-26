@@ -1296,6 +1296,7 @@ fn dry_run_hook_and_exec() {
   let actions = vec![
     Action::RunHook {
       name: "setup".into(),
+      raw_cmd: "npm install".into(),
       rendered_cmd: "npm install".into(),
       cwd: PathBuf::from("/repo"),
       env: vec![],
@@ -1390,6 +1391,7 @@ fn dry_run_json_multiple_action_types() {
     },
     Action::RunHook {
       name: "setup".into(),
+      raw_cmd: "npm i".into(),
       rendered_cmd: "npm i".into(),
       cwd: PathBuf::from("/repo"),
       env: vec![],
