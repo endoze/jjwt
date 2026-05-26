@@ -1,7 +1,5 @@
 /// User-defined alias execution.
 pub mod alias;
-/// List workspace names for shell completion.
-pub mod complete;
 /// Validate configuration files and report issues.
 pub mod config_check;
 /// Scaffold a new config file (project or user).

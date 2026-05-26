@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use clap::ValueEnum;
+use clap_complete::env::{Bash, EnvCompleter, Fish, Zsh};
 
 /// Supported shell flavors for the `config shell init` command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -47,10 +48,6 @@ const FISH_WRAPPER: &str = r#"function wt
 end
 "#;
 
-/// Fish completions for workspace names on `switch` and `remove`.
-const FISH_COMPLETIONS: &str = r#"complete -c wt -n '__fish_seen_subcommand_from switch remove' -xa '(command jjwt step _complete-workspaces 2>/dev/null)'
-"#;
-
 /// POSIX (bash/zsh) wrapper. Same directive protocol as Fish.
 const POSIX_WRAPPER: &str = r#"wt() {
   if [ "$1" = "switch" ] || [ "$1" = "remove" ]; then
@@ -85,50 +82,58 @@ EOF
 }
 "#;
 
-/// Bash completions for workspace names on `switch` and `remove`.
-const BASH_COMPLETIONS: &str = r#"_wt_complete() {
-  local cur="${COMP_WORDS[COMP_CWORD]}"
-  local subcmd="${COMP_WORDS[1]}"
-  if [ "$subcmd" = "switch" ] || [ "$subcmd" = "remove" ]; then
-    COMPREPLY=($(compgen -W "$(command jjwt step _complete-workspaces 2>/dev/null)" -- "$cur"))
-  fi
+/// Fish completion registration. Emits dynamic-engine `complete` lines for
+/// both `jjwt` and `wt` so tab completion in either invocation calls back
+/// into the binary with `COMPLETE=fish`.
+pub fn registration_fish() -> String {
+  build_registration(&Fish, &["jjwt", "wt"])
 }
-complete -F _wt_complete wt
-"#;
 
-/// Zsh completions for workspace names on `switch` and `remove`.
-const ZSH_COMPLETIONS: &str = r#"_wt_complete() {
-  local cur="${words[CURRENT]}"
-  local subcmd="${words[2]}"
-  if [ "$subcmd" = "switch" ] || [ "$subcmd" = "remove" ]; then
-    local completions
-    completions=($(command jjwt step _complete-workspaces 2>/dev/null))
-    compadd -a completions
-  fi
+/// Bash completion registration. Same shape as fish.
+pub fn registration_bash() -> String {
+  build_registration(&Bash, &["jjwt", "wt"])
 }
-compdef _wt_complete wt
-"#;
 
-/// Print the Fish shell wrapper function to stdout.
+/// Zsh completion registration. Same shape as fish.
+pub fn registration_zsh() -> String {
+  build_registration(&Zsh, &["jjwt", "wt"])
+}
+
+/// Run clap_complete's per-shell registration script generator once per bin.
+/// All registrations share a single completer ("jjwt"), so `wt switch <Tab>`
+/// also calls the `jjwt` binary at completion time.
+fn build_registration<C: EnvCompleter + ?Sized>(shell: &C, bins: &[&str]) -> String {
+  let mut buf: Vec<u8> = Vec::new();
+
+  for bin in bins {
+    // Errors here would only fire on I/O failures to an in-memory Vec, which
+    // can't happen. Bubble them out as an empty string in the impossible case.
+    let _ = shell.write_registration("COMPLETE", "jjwt", bin, "jjwt", &mut buf);
+  }
+
+  String::from_utf8(buf).unwrap_or_default()
+}
+
+/// Print the Fish shell wrapper function to stdout. Completion registration is
+/// installed separately via `jjwt config shell completions fish`.
 pub fn run_fish() -> Result<()> {
   print!("{FISH_WRAPPER}");
-  print!("{FISH_COMPLETIONS}");
 
   Ok(())
 }
 
-/// Print the Bash shell wrapper function to stdout.
+/// Print the Bash shell wrapper function to stdout. Completion registration is
+/// installed separately via `jjwt config shell completions bash`.
 pub fn run_bash() -> Result<()> {
   print!("{POSIX_WRAPPER}");
-  print!("{BASH_COMPLETIONS}");
 
   Ok(())
 }
 
-/// Print the Zsh shell wrapper function to stdout.
+/// Print the Zsh shell wrapper function to stdout. Completion registration is
+/// installed separately via `jjwt config shell completions zsh`.
 pub fn run_zsh() -> Result<()> {
   print!("{POSIX_WRAPPER}");
-  print!("{ZSH_COMPLETIONS}");
 
   Ok(())
 }

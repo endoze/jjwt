@@ -1,8 +1,20 @@
+use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
 fn jjwt_bin() -> std::path::PathBuf {
   std::path::PathBuf::from(env!("CARGO_BIN_EXE_jjwt"))
+}
+
+/// Build a `Command` for the jjwt binary with user-config discovery pointed
+/// at `fake_home` so the developer's `~/.config/jjwt/config.toml` cannot
+/// leak into tests.
+fn jjwt_cmd(fake_home: &Path) -> Command {
+  let mut cmd = Command::new(jjwt_bin());
+  cmd.env("HOME", fake_home);
+  cmd.env("XDG_CONFIG_HOME", fake_home);
+
+  cmd
 }
 
 fn jj() -> Command {
@@ -19,6 +31,7 @@ fn switch_create_produces_workspace_bookmark_and_hook_output() {
 
   let tmp = TempDir::new().unwrap();
   let repo = tmp.path();
+  let fake_home = TempDir::new().unwrap();
 
   assert!(
     jj()
@@ -61,7 +74,7 @@ sentinel = "echo {{ branch }} > sentinel.txt"
   )
   .unwrap();
 
-  let out = Command::new(jjwt_bin())
+  let out = jjwt_cmd(fake_home.path())
     .arg("-C")
     .arg(repo)
     .args(["switch", "test-branch", "--create"])
@@ -122,6 +135,7 @@ fn list_renders_table_with_default_and_added_workspaces() {
 
   let tmp = TempDir::new().unwrap();
   let repo = tmp.path();
+  let fake_home = TempDir::new().unwrap();
 
   assert!(
     jj()
@@ -180,7 +194,7 @@ url = "http://example.com/{{ branch }}"
       .success()
   );
 
-  let out = Command::new(jjwt_bin())
+  let out = jjwt_cmd(fake_home.path())
     .arg("-C")
     .arg(repo)
     .args(["switch", "alpha", "--create"])
@@ -204,7 +218,7 @@ url = "http://example.com/{{ branch }}"
   std::fs::write(alpha_path.join("scratch.txt"), "scratch").unwrap();
 
   // Compact list (without --full): hides CI, URL, Commit, Age, Summary.
-  let list_out = Command::new(jjwt_bin())
+  let list_out = jjwt_cmd(fake_home.path())
     .arg("-C")
     .arg(repo)
     .arg("list")
@@ -258,7 +272,7 @@ url = "http://example.com/{{ branch }}"
   );
 
   // Full list (with --full): shows all columns including URL.
-  let full_out = Command::new(jjwt_bin())
+  let full_out = jjwt_cmd(fake_home.path())
     .arg("-C")
     .arg(repo)
     .arg("list")
@@ -278,6 +292,29 @@ url = "http://example.com/{{ branch }}"
 }
 
 #[test]
+fn dynamic_completion_does_not_error_outside_repo() {
+  let tmp = TempDir::new().unwrap();
+  let fake_home = TempDir::new().unwrap();
+
+  let out = jjwt_cmd(fake_home.path())
+    .env("COMPLETE", "fish")
+    .current_dir(tmp.path())
+    .arg("--")
+    .arg("jjwt")
+    .arg("switch")
+    .arg("")
+    .output()
+    .unwrap();
+
+  assert!(
+    out.status.success(),
+    "completion exited non-zero:\nstdout: {}\nstderr: {}",
+    String::from_utf8_lossy(&out.stdout),
+    String::from_utf8_lossy(&out.stderr)
+  );
+}
+
+#[test]
 fn list_works_from_inside_a_workspace_subdir() {
   if which::which("jj").is_err() {
     eprintln!("skipping e2e: jj not on PATH");
@@ -287,6 +324,7 @@ fn list_works_from_inside_a_workspace_subdir() {
 
   let tmp = TempDir::new().unwrap();
   let repo = tmp.path();
+  let fake_home = TempDir::new().unwrap();
 
   assert!(
     jj()
@@ -324,7 +362,7 @@ fn list_works_from_inside_a_workspace_subdir() {
   )
   .unwrap();
 
-  let out = Command::new(jjwt_bin())
+  let out = jjwt_cmd(fake_home.path())
     .arg("-C")
     .arg(repo)
     .args(["switch", "beta", "--create"])
@@ -341,7 +379,7 @@ fn list_works_from_inside_a_workspace_subdir() {
   // Run `list` with cwd inside the newly created workspace, which has its
   // own `.jj/` whose `repo` is a file pointing back to the main repo.
   let ws_dir = repo.join(".worktrees/beta");
-  let list_out = Command::new(jjwt_bin())
+  let list_out = jjwt_cmd(fake_home.path())
     .arg("-C")
     .arg(&ws_dir)
     .arg("list")
