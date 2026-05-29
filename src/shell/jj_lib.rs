@@ -304,6 +304,9 @@ impl Jj for JjLib {
     pollster::block_on(tx.repo_mut().remove_wc_commit(&ws_name))
       .context("workspace forget failed")?;
 
+    pollster::block_on(tx.repo_mut().rebase_descendants())
+      .context("failed to rebase descendants")?;
+
     let new_repo = pollster::block_on(tx.commit(format!("forget workspace {name}")))
       .context("transaction commit failed")?;
 
@@ -610,6 +613,9 @@ impl Jj for JjLib {
 
     pollster::block_on(tx.repo_mut().remove_wc_commit(&old_ws_buf))
       .context("workspace rename failed")?;
+
+    pollster::block_on(tx.repo_mut().rebase_descendants())
+      .context("failed to rebase descendants")?;
 
     let new_repo = pollster::block_on(tx.commit(format!("rename workspace {old} → {new}")))
       .context("transaction commit failed")?;

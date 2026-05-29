@@ -401,3 +401,91 @@ fn list_works_from_inside_a_workspace_subdir() {
   );
   assert!(text.contains("beta"), "beta workspace row missing:\n{text}");
 }
+
+#[test]
+fn remove_forgets_workspace_without_panicking() {
+  if which::which("jj").is_err() {
+    eprintln!("skipping e2e: jj not on PATH");
+
+    return;
+  }
+
+  let tmp = TempDir::new().unwrap();
+  let repo = tmp.path();
+  let fake_home = TempDir::new().unwrap();
+
+  assert!(
+    jj()
+      .arg("git")
+      .arg("init")
+      .arg(repo)
+      .status()
+      .unwrap()
+      .success()
+  );
+
+  std::fs::write(repo.join("README.md"), "init").unwrap();
+
+  assert!(
+    jj()
+      .current_dir(repo)
+      .args(["describe", "-m", "init"])
+      .status()
+      .unwrap()
+      .success()
+  );
+  assert!(
+    jj()
+      .current_dir(repo)
+      .arg("new")
+      .status()
+      .unwrap()
+      .success()
+  );
+
+  std::fs::create_dir_all(repo.join(".config")).unwrap();
+  std::fs::write(
+    repo.join(".config/wt.toml"),
+    "worktree-path = \".worktrees/{{ branch | sanitize }}\"\n",
+  )
+  .unwrap();
+
+  let create = jjwt_cmd(fake_home.path())
+    .arg("-C")
+    .arg(repo)
+    .args(["switch", "gamma", "--create"])
+    .output()
+    .unwrap();
+
+  assert!(
+    create.status.success(),
+    "switch --create failed:\nstdout: {}\nstderr: {}",
+    String::from_utf8_lossy(&create.stdout),
+    String::from_utf8_lossy(&create.stderr)
+  );
+
+  let ws_dir = repo.join(".worktrees/gamma");
+
+  assert!(ws_dir.is_dir(), "workspace dir missing: {ws_dir:?}");
+
+  // The fresh workspace's working-copy commit is an empty head, so forgetting
+  // it abandons that commit. This previously panicked in jj-lib because the
+  // transaction was committed without rebasing descendants.
+  let remove = jjwt_cmd(fake_home.path())
+    .arg("-C")
+    .arg(repo)
+    .args(["remove", "-f", "gamma"])
+    .output()
+    .unwrap();
+
+  assert!(
+    remove.status.success(),
+    "remove failed:\nstdout: {}\nstderr: {}",
+    String::from_utf8_lossy(&remove.stdout),
+    String::from_utf8_lossy(&remove.stderr)
+  );
+  assert!(
+    !ws_dir.exists(),
+    "workspace dir should be removed: {ws_dir:?}"
+  );
+}
