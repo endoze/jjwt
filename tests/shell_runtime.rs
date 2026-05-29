@@ -227,6 +227,19 @@ impl Proc for FakeProc {
     Ok(0)
   }
 
+  fn run_sh_streamed(&self, cmd: &str, cwd: &Path, _env: &[(String, String)]) -> Result<i32> {
+    self
+      .calls
+      .borrow_mut()
+      .push(format!("streamed {cmd} (cwd={})", cwd.display()));
+
+    if self.fail_on.as_deref() == Some(cmd) {
+      return Ok(1);
+    }
+
+    Ok(0)
+  }
+
   fn spawn_detached(&self, program: &str, args: &[&str]) -> Result<()> {
     self
       .calls
@@ -257,6 +270,7 @@ fn execute_runs_actions_in_order() {
       },
       Action::RunHook {
         name: "h".into(),
+        raw_cmd: "echo hi".into(),
         rendered_cmd: "echo hi".into(),
         cwd: PathBuf::from("/repo/.worktrees/x"),
         env: vec![("JJWT_WORKSPACE".into(), "x".into())],
@@ -278,7 +292,7 @@ fn execute_runs_actions_in_order() {
     ]
   );
   assert_eq!(calls_proc.len(), 1);
-  assert!(calls_proc[0].starts_with("sh -c echo hi"));
+  assert!(calls_proc[0].starts_with("streamed echo hi"));
   assert_eq!(printed, vec!["/repo/.worktrees/x".to_string()]);
 }
 
@@ -296,6 +310,7 @@ fn execute_halts_on_hook_failure() {
     actions: vec![
       Action::RunHook {
         name: "bad-hook".into(),
+        raw_cmd: "bad".into(),
         rendered_cmd: "bad".into(),
         cwd: PathBuf::from("/repo"),
         env: vec![],

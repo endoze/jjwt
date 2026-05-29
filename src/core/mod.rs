@@ -4,6 +4,8 @@ pub mod config;
 pub mod filters;
 /// List table rendering, JSON output, and display formatting.
 pub mod format;
+/// Bash syntax highlighting for hook command echoes.
+pub mod highlight;
 /// Plan construction for switch, remove, list, hook, alias, relocate, and prune.
 pub mod plan;
 /// Minijinja template rendering with hook/alias variable context.
