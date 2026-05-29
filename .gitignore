@@ -6,3 +6,4 @@ tarpaulin-report.*
 *.profraw
 *.profdata
 /target/*
+/docs/*
