@@ -120,6 +120,7 @@ enum StepSub {
   /// Rename a workspace and move its directory.
   Relocate {
     /// Current workspace name.
+    #[arg(add = crate::completion::workspace_completer())]
     old_name: String,
     /// New workspace name.
     new_name: String,
@@ -141,16 +142,11 @@ enum StepSub {
   /// Copy jj-ignored files from one workspace to another (CoW reflink when available).
   CopyIgnored {
     /// Source workspace name.
+    #[arg(add = crate::completion::workspace_completer())]
     source: String,
     /// Destination workspace name (defaults to current workspace).
+    #[arg(add = crate::completion::workspace_completer())]
     dest: Option<String>,
-  },
-  /// List workspace names for shell completion (hidden).
-  #[command(name = "_complete-workspaces", hide = true)]
-  CompleteWorkspaces {
-    /// Only show workspaces matching this prefix.
-    #[arg(long)]
-    prefix: Option<String>,
   },
   /// Manage per-workspace variables (stored in `.jj/jjwt-state.toml`).
   Var {
@@ -188,6 +184,7 @@ enum VarSub {
 #[derive(Args)]
 struct SwitchCmd {
   /// Target workspace name.
+  #[arg(add = crate::completion::workspace_completer_restricted())]
   name: String,
   /// Create the workspace if it does not exist.
   #[arg(short, long)]
@@ -204,7 +201,7 @@ struct SwitchCmd {
   clobber: bool,
   /// Base revision for the new workspace (bookmark name, change ID, etc.).
   /// Defaults to the trunk bookmark. Only used with --create.
-  #[arg(short = 'b', long, requires = "create")]
+  #[arg(short = 'b', long, requires = "create", add = crate::completion::bookmark_completer())]
   base: Option<String>,
   /// Skip configured hooks for this invocation.
   #[arg(long = "no-hooks")]
@@ -224,7 +221,7 @@ struct SwitchCmd {
 #[derive(Args)]
 struct RemoveCmd {
   /// Workspaces to remove. When omitted, defaults to the current workspace.
-  #[arg(num_args = 0..)]
+  #[arg(num_args = 0.., add = crate::completion::workspace_completer())]
   names: Vec<String>,
   /// Force worktree removal: bypass the "uncommitted changes" check.
   #[arg(short, long)]
@@ -289,6 +286,7 @@ impl From<HookSourceArg> for HookSource {
 #[derive(Args)]
 struct HookCmd {
   /// Hook name to run. Omit to use --show.
+  #[arg(add = crate::completion::hook_completer())]
   name: Option<String>,
   /// List all configured hooks.
   #[arg(long)]
@@ -371,6 +369,12 @@ struct ConfigShellInitCmd {
   shell: ShellKind,
 }
 
+/// Build the clap `Command` tree for `jjwt`. Exposed so the completion engine
+/// can walk the same tree without re-deriving it.
+pub fn command() -> clap::Command {
+  Cli::command()
+}
+
 /// Parses CLI arguments and dispatches to the appropriate command handler.
 pub fn run() -> Result<()> {
   let mut cli = Cli::parse();
@@ -441,7 +445,19 @@ pub fn run() -> Result<()> {
       ConfigSub::Shell(s) => match s.sub {
         ConfigShellSub::Init(i) => cmd::shell::dispatch(i.shell),
         ConfigShellSub::Completions(c) => {
-          clap_complete::generate(c.shell, &mut Cli::command(), "jjwt", &mut std::io::stdout());
+          use std::io::Write as _;
+
+          let out = match c.shell {
+            Shell::Fish => cmd::shell::registration_fish(),
+            Shell::Bash => cmd::shell::registration_bash(),
+            Shell::Zsh => cmd::shell::registration_zsh(),
+            _ => String::new(),
+          };
+
+          let stdout = std::io::stdout();
+          let mut handle = stdout.lock();
+
+          handle.write_all(out.as_bytes())?;
 
           Ok(())
         }
@@ -480,7 +496,6 @@ pub fn run() -> Result<()> {
       StepSub::CopyIgnored { source, dest } => {
         cmd::step_copy_ignored::run(cwd, &source, dest.as_deref())
       }
-      StepSub::CompleteWorkspaces { prefix } => cmd::complete::run(cwd, prefix.as_deref()),
       StepSub::Var { sub } => match sub {
         VarSub::Set { key, value } => cmd::step_var::run_set(cwd, &key, &value),
         VarSub::Get { key } => cmd::step_var::run_get(cwd, &key),

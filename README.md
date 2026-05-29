@@ -46,20 +46,10 @@ nix run github:endoze/jjwt
 
 ## Shell setup
 
-Regardless of how you installed jjwt, set up your shell so `wt switch` can `cd` into the target workspace:
-
-```sh
-# Fish
-jjwt config shell init fish > ~/.config/fish/functions/wt.fish
-
-# Bash (add to ~/.bashrc)
-eval "$(jjwt config shell init bash)"
-
-# Zsh (add to ~/.zshrc)
-eval "$(jjwt config shell init zsh)"
-```
-
-This creates a `wt` shell function that wraps `jjwt`.
+Install completions, then the `wt` wrapper. The completion script registers
+dynamic completion for both `jjwt` and `wt` in one go — the wrapper itself
+is just a shell function that interprets the `cd:` / `exec:` directives
+emitted by `jjwt switch`.
 
 ### Completions
 
@@ -72,6 +62,22 @@ eval "$(jjwt config shell completions bash)"
 
 # Zsh (add to ~/.zshrc, before compinit)
 jjwt config shell completions zsh > "${fpath[1]}/_jjwt"
+```
+
+### `wt` wrapper
+
+This creates a `wt` shell function that wraps `jjwt` so `wt switch` can `cd`
+your shell into the target workspace.
+
+```sh
+# Fish — sourced at startup so both the function and the completion line take effect
+jjwt config shell init fish > ~/.config/fish/conf.d/wt.fish
+
+# Bash (add to ~/.bashrc, AFTER the completions line above)
+eval "$(jjwt config shell init bash)"
+
+# Zsh (add to ~/.zshrc, AFTER the completions line above)
+eval "$(jjwt config shell init zsh)"
 ```
 
 ## Quick start

@@ -5,6 +5,7 @@ exclude = ["tests/**", "fixtures/**"]
 allow = [
   "src/main.rs",
   "src/cli.rs",
+  "src/completion.rs",
   "src/shell/observe.rs",
   "src/shell/trash.rs",
   "src/shell/fs.rs",
