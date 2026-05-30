@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::core::template::render;
 use crate::core::types::RenderContext;
+use crate::shell::config_loader::load_merged_config;
 use crate::shell::fs::RealFs;
 use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
@@ -12,10 +13,12 @@ use crate::shell::observe::observe;
 /// Render a template expression with the current observation context and
 /// print the result to stdout (no trailing newline beyond what the
 /// template produces). Mirrors `wt step eval`.
-pub fn run(cwd: &Path, template: &str) -> Result<()> {
-  let jj = JjLib::new(cwd)?;
+pub fn run(cwd: &Path, config_path: Option<&Path>, template: &str) -> Result<()> {
+  let cfg = load_merged_config(cwd, config_path)?;
+
+  let jj = JjLib::with_template(cwd, &cfg.worktree_path_template)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
+  let obs = observe(&jj, &fs, cwd, None, &cfg.worktree_path_template)?;
   let (branch, ws_path) = match obs.current_workspace.as_deref() {
     Some(name) => obs
       .workspaces

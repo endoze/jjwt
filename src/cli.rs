@@ -466,10 +466,10 @@ pub fn run() -> Result<()> {
       ConfigSub::Show => cmd::config_show::run(cwd, config),
     },
     Cmd::Step(s) => match s.sub {
-      StepSub::Eval { template } => cmd::step_eval::run(cwd, &template),
-      StepSub::ForEach { cmd: argv } => cmd::step_for_each::run(cwd, argv),
+      StepSub::Eval { template } => cmd::step_eval::run(cwd, config, &template),
+      StepSub::ForEach { cmd: argv } => cmd::step_for_each::run(cwd, config, argv),
       StepSub::Tether { cmd: argv } => {
-        let code = cmd::step_tether::run(cwd, argv)?;
+        let code = cmd::step_tether::run(cwd, config, argv)?;
 
         std::process::exit(code);
       }
@@ -492,15 +492,15 @@ pub fn run() -> Result<()> {
         format.into(),
       ),
       StepSub::Describe { dry_run } => cmd::step_describe::run(cwd, config, dry_run),
-      StepSub::Pick => cmd::step_pick::run(cwd),
+      StepSub::Pick => cmd::step_pick::run(cwd, config),
       StepSub::CopyIgnored { source, dest } => {
-        cmd::step_copy_ignored::run(cwd, &source, dest.as_deref())
+        cmd::step_copy_ignored::run(cwd, config, &source, dest.as_deref())
       }
       StepSub::Var { sub } => match sub {
-        VarSub::Set { key, value } => cmd::step_var::run_set(cwd, &key, &value),
-        VarSub::Get { key } => cmd::step_var::run_get(cwd, &key),
-        VarSub::List => cmd::step_var::run_list(cwd),
-        VarSub::Delete { key } => cmd::step_var::run_delete(cwd, &key),
+        VarSub::Set { key, value } => cmd::step_var::run_set(cwd, config, &key, &value),
+        VarSub::Get { key } => cmd::step_var::run_get(cwd, config, &key),
+        VarSub::List => cmd::step_var::run_list(cwd, config),
+        VarSub::Delete { key } => cmd::step_var::run_delete(cwd, config, &key),
       },
     },
     Cmd::External(parts) => {

@@ -93,8 +93,9 @@ fn resolve_shortcut<J: Jj, F: crate::shell::fs::Fs>(
   cwd: &Path,
   jj: &J,
   fs: &F,
+  worktree_path_template: &str,
 ) -> Result<(String, Option<String>)> {
-  let probe = observe(jj, fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
+  let probe = observe(jj, fs, cwd, None, worktree_path_template)?;
   let cur = probe.current_workspace;
 
   let resolved = match name {
@@ -146,8 +147,9 @@ fn should_auto_create<J: Jj, F: crate::shell::fs::Fs>(
   cwd: &Path,
   resolved_name: &str,
   original_name: &str,
+  worktree_path_template: &str,
 ) -> Result<bool> {
-  let probe = observe(jj, fs, cwd, Some(resolved_name), crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
+  let probe = observe(jj, fs, cwd, Some(resolved_name), worktree_path_template)?;
   let ws_exists = probe.workspaces.iter().any(|w| w.name == resolved_name);
 
   if ws_exists {
@@ -196,15 +198,24 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, mut args: SwitchArgs) -> Resu
     );
   }
 
-  let (resolved_name, current_before) = resolve_shortcut(&args.name, cwd, &jj, &fs)?;
+  let (resolved_name, current_before) =
+    resolve_shortcut(&args.name, cwd, &jj, &fs, &cfg.worktree_path_template)?;
 
   if let Some(ref base) = args.base {
-    let (resolved_base, _) = resolve_shortcut(base, cwd, &jj, &fs)?;
+    let (resolved_base, _) = resolve_shortcut(base, cwd, &jj, &fs, &cfg.worktree_path_template)?;
 
     args.base = Some(resolved_base);
   }
 
-  args.create = args.create || should_auto_create(&jj, &fs, cwd, &resolved_name, &args.name)?;
+  args.create = args.create
+    || should_auto_create(
+      &jj,
+      &fs,
+      cwd,
+      &resolved_name,
+      &args.name,
+      &cfg.worktree_path_template,
+    )?;
   args.name = resolved_name;
 
   let obs = observe(

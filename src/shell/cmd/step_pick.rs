@@ -3,22 +3,25 @@
 use anyhow::Result;
 use std::path::Path;
 
+use crate::shell::config_loader::load_merged_config;
 use crate::shell::fs::RealFs;
 use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
 
 /// Interactive workspace picker using skim. Prints the selected workspace
 /// path to stdout so the shell wrapper can `cd` into it.
-pub fn run(cwd: &Path) -> Result<()> {
+pub fn run(cwd: &Path, config_path: Option<&Path>) -> Result<()> {
   use std::io::IsTerminal;
 
   if !std::io::stdin().is_terminal() {
     anyhow::bail!("step pick requires an interactive terminal");
   }
 
-  let jj = JjLib::new(cwd)?;
+  let cfg = load_merged_config(cwd, config_path)?;
+
+  let jj = JjLib::with_template(cwd, &cfg.worktree_path_template)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
+  let obs = observe(&jj, &fs, cwd, None, &cfg.worktree_path_template)?;
 
   if obs.workspaces.is_empty() {
     anyhow::bail!("no workspaces found");
