@@ -1,6 +1,6 @@
 [package]
 name = "jjwt"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "jujutsu-backed worktrunk-compatible workspace manager"
 authors = ["Endoze <endoze@endozemedia.com>"]
