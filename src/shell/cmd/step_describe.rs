@@ -34,9 +34,9 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, dry_run: bool) -> Result<()> 
     )
   })?;
 
-  let jj = JjLib::new(cwd)?;
+  let jj = JjLib::with_template(cwd, &cfg.worktree_path_template)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
+  let obs = observe(&jj, &fs, cwd, None, &cfg.worktree_path_template)?;
 
   if !obs.is_jj_repo {
     bail!("not inside a jj repo");

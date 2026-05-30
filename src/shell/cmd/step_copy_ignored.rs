@@ -4,16 +4,19 @@ use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::shell::config_loader::load_merged_config;
 use crate::shell::fs::RealFs;
 use crate::shell::jj_lib::JjLib;
 use crate::shell::observe::observe;
 
 /// Copy jj-ignored files from one workspace to another using CoW reflinks
 /// when available, falling back to regular copy.
-pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
-  let jj = JjLib::new(cwd)?;
+pub fn run(cwd: &Path, config_path: Option<&Path>, source: &str, dest: Option<&str>) -> Result<()> {
+  let cfg = load_merged_config(cwd, config_path)?;
+
+  let jj = JjLib::with_template(cwd, &cfg.worktree_path_template)?;
   let fs = RealFs;
-  let obs = observe(&jj, &fs, cwd, None, crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE)?;
+  let obs = observe(&jj, &fs, cwd, None, &cfg.worktree_path_template)?;
 
   let source_ws = obs
     .workspaces
@@ -42,7 +45,7 @@ pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
   let dest_path = &dest_ws.path;
 
   // Get tracked files in the source workspace to identify ignored files.
-  let tracked = tracked_files(&obs.repo_root, source)?;
+  let tracked = tracked_files(&obs.repo_root, source, &cfg.worktree_path_template)?;
 
   // Walk source directory, skip .jj/ and tracked files, copy the rest.
   let mut copied = 0u32;
@@ -89,12 +92,8 @@ pub fn run(cwd: &Path, source: &str, dest: Option<&str>) -> Result<()> {
 }
 
 /// List all tracked files in a workspace via `jj file list`.
-fn tracked_files(repo_root: &Path, workspace: &str) -> Result<HashSet<PathBuf>> {
-  let ws_path = crate::shell::jj::workspace_dir(
-    repo_root,
-    workspace,
-    crate::core::types::DEFAULT_WORKTREE_PATH_TEMPLATE,
-  );
+fn tracked_files(repo_root: &Path, workspace: &str, template: &str) -> Result<HashSet<PathBuf>> {
+  let ws_path = crate::shell::jj::workspace_dir(repo_root, workspace, template);
 
   let output = std::process::Command::new("jj")
     .current_dir(&ws_path)
