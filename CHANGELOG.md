@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-06-16
+
+### Features
+
+- Improve hook ergonomics and switch resilience
+
+### Bug Fixes
+
+- *(shell)* Honor configured worktree path template in step commands
+
+
 ## [0.1.1] - 2026-05-29
 
 ### Features
