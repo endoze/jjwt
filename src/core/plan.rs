@@ -195,6 +195,11 @@ fn plan_switch_create(
   let revision = args
     .base
     .as_ref()
+    .or(if obs.target_bookmark_exists {
+      Some(&args.name)
+    } else {
+      None
+    })
     .or(obs.trunk_bookmark.as_ref())
     .cloned();
 
@@ -203,10 +208,13 @@ fn plan_switch_create(
     path: ws_path.clone(),
     revision,
   });
-  plan.push(Action::JjBookmarkCreate {
-    name: args.name.clone(),
-    workspace: args.name.clone(),
-  });
+
+  if !obs.target_bookmark_exists {
+    plan.push(Action::JjBookmarkCreate {
+      name: args.name.clone(),
+      workspace: args.name.clone(),
+    });
+  }
   plan.push(Action::JjWorkspaceUpdateStale {
     name: args.name.clone(),
   });
@@ -550,9 +558,59 @@ pub fn plan_hook(
     .find(|w| w.name == args.current_workspace)
     .ok_or_else(|| CoreError::WorkspaceMissing(args.current_workspace.clone()))?;
 
-  // Search every configured hook group; remember which one matched so
-  // the rendered template can advertise the correct `hook_type` to the
-  // user's command.
+  // First, check if the name matches a lifecycle slot (e.g. "post-start").
+  // If so, run ALL steps in that slot in order.
+  let slot_match: Option<&[SourcedHookGroup]> = cfg
+    .all_hook_groups()
+    .into_iter()
+    .find(|(hook_type, _)| *hook_type == args.name)
+    .map(|(_, groups)| groups);
+
+  if let Some(groups) = slot_match {
+    if groups.is_empty()
+      || groups.iter().all(|shg| shg.group.is_empty())
+    {
+      return Err(CoreError::HookNotFound(args.name.clone()));
+    }
+
+    let mut plan = Plan::new();
+
+    for shg in groups {
+      for (step_name, tmpl) in &shg.group {
+        let mut ctx = render_ctx(
+          &args.current_workspace,
+          &ws.path,
+          &obs.repo_root,
+          &args.name,
+          step_name,
+        );
+        ctx.vars = args.vars.clone();
+
+        let rendered = render(tmpl, &ctx)?;
+
+        plan.push(Action::RunHook {
+          name: step_name.clone(),
+          raw_cmd: tmpl.clone(),
+          rendered_cmd: rendered,
+          cwd: ws.path.clone(),
+          env: hook_env(
+            &args.current_workspace,
+            &ws.path,
+            &args.name,
+            step_name,
+            shg.source,
+          ),
+          source: shg.source,
+        });
+      }
+    }
+
+    return Ok(plan);
+  }
+
+  // Fallback: search every configured hook group for an individual step
+  // name. Remember which slot matched so the rendered template can
+  // advertise the correct `hook_type`.
   let mut matches: Vec<(&str, &str, HookSource)> = Vec::new();
 
   for (hook_type, groups) in cfg.all_hook_groups() {

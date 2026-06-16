@@ -18,8 +18,8 @@ pub enum CoreError {
   /// Minijinja template rendering failed.
   #[error("template render error: {0}")]
   TemplateRender(String),
-  /// Named hook does not exist in any configured hook group.
-  #[error("hook '{0}' not found in config")]
+  /// Named hook type or step does not exist in any configured hook group.
+  #[error("hook type or step '{0}' not found in config")]
   HookNotFound(String),
   /// Named hook appears in more than one hook group.
   #[error("hook '{0}' is ambiguous: appears in multiple groups")]

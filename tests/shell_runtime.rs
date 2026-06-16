@@ -41,6 +41,10 @@ impl Jj for FakeJj {
       .borrow_mut()
       .push(format!("workspace_add {n} {}{rev_str}", p.display()));
 
+    if n == "fail" {
+      return Err(anyhow::anyhow!("workspace_add boom"));
+    }
+
     Ok(())
   }
 
@@ -297,7 +301,7 @@ fn execute_runs_actions_in_order() {
 }
 
 #[test]
-fn execute_halts_on_hook_failure() {
+fn execute_continues_after_hook_failure() {
   let mut rt = Runtime::new(
     FakeJj::default(),
     FakeFs::default(),
@@ -314,7 +318,34 @@ fn execute_halts_on_hook_failure() {
         rendered_cmd: "bad".into(),
         cwd: PathBuf::from("/repo"),
         env: vec![],
-        source: HookSource::Project,
+        source: HookSource::User,
+      },
+      Action::PrintLine("reached".into()),
+    ],
+  };
+
+  let printed = execute(&plan, &mut rt).expect("hook failures must not abort the plan");
+
+  assert_eq!(
+    printed,
+    vec!["reached".to_string()],
+    "PrintLine after a failing hook must still run so the shell wrapper can cd in",
+  );
+}
+
+#[test]
+fn execute_still_fatal_on_infrastructure_failure() {
+  // Workspace name "fail" makes FakeJj::workspace_add return an Err; this
+  // simulates `jj workspace add` itself failing (no workspace gets
+  // created). Such failures must remain fatal — there's nothing to switch
+  // into.
+  let mut rt = Runtime::new(FakeJj::default(), FakeFs::default(), FakeProc::default());
+  let plan = Plan {
+    actions: vec![
+      Action::JjWorkspaceAdd {
+        name: "fail".into(),
+        path: PathBuf::from("/repo/.worktrees/fail"),
+        revision: None,
       },
       Action::PrintLine("unreached".into()),
     ],
@@ -324,8 +355,8 @@ fn execute_halts_on_hook_failure() {
   let msg = format!("{err:#}");
 
   assert!(
-    msg.contains("bad-hook"),
-    "error should name the failing hook: {msg}"
+    msg.contains("workspace_add boom"),
+    "infrastructure failures must still abort: {msg}",
   );
 }
 
