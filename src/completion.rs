@@ -47,6 +47,14 @@ pub fn maybe_handle_env_completion() -> bool {
 
   args.drain(0..escape_index);
 
+  // Normalize the command name so clap can match regardless of whether
+  // the user invoked `jjwt` or the `wt` shell wrapper.
+  if let Some(first) = args.first_mut()
+    && *first != "jjwt"
+  {
+    *first = OsString::from("jjwt");
+  }
+
   let current_dir = std::env::current_dir().ok();
 
   if args.is_empty() {
@@ -261,6 +269,16 @@ impl ValueCompleter for HookCompleter {
       return Vec::new();
     };
 
+    let mut candidates = Vec::new();
+
+    // Primary: lifecycle slot names that have at least one step.
+    for (hook_type, groups) in cfg.all_hook_groups() {
+      if groups.iter().any(|shg| !shg.group.is_empty()) {
+        candidates.push(CompletionCandidate::new(hook_type));
+      }
+    }
+
+    // Secondary: individual step names (for the fallback path).
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for (_hook_type, groups) in cfg.all_hook_groups() {
@@ -271,7 +289,11 @@ impl ValueCompleter for HookCompleter {
       }
     }
 
-    seen.into_iter().map(CompletionCandidate::new).collect()
+    for name in seen {
+      candidates.push(CompletionCandidate::new(name));
+    }
+
+    candidates
   }
 }
 

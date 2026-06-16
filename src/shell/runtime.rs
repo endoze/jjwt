@@ -61,6 +61,7 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
   rt: &mut Runtime<J, F, P>,
 ) -> Result<Vec<String>> {
   let mut printed = Vec::new();
+  let mut had_hook_failure = false;
 
   for action in &plan.actions {
     match action {
@@ -126,9 +127,9 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         let status = rt.proc.run_sh_streamed(rendered_cmd, cwd, env)?;
 
         if status != 0 {
-          return Err(anyhow!(
-            "hook '{name}' failed (status {status}): {rendered_cmd}"
-          ));
+          announce_hook_failure(name, status, rendered_cmd);
+
+          had_hook_failure = true;
         }
       }
       Action::Exec {
@@ -146,6 +147,10 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         printed.push(s.clone());
       }
     }
+  }
+
+  if had_hook_failure {
+    announce_hook_summary();
   }
 
   Ok(printed)
@@ -182,6 +187,35 @@ fn announce_hook(name: &str, env: &[(String, String)], rendered_cmd: &str, cwd: 
   }
 
   eprintln!("{}", highlight_bash_with_gutter(rendered_cmd, color));
+}
+
+/// Print a failure notice to stderr when a hook exits non-zero. The runtime
+/// continues past the failure so the rest of the plan (in particular the
+/// `PrintLine` that the shell wrapper consumes to `cd` into the workspace)
+/// still runs.
+fn announce_hook_failure(name: &str, status: i32, rendered_cmd: &str) {
+  let color = use_color_stderr();
+  let header = format!("✗ hook '{name}' failed (status {status}): {rendered_cmd}");
+
+  if color {
+    eprintln!("\x1b[31m{header}\x1b[0m");
+  } else {
+    eprintln!("{header}");
+  }
+}
+
+/// Print a one-line summary to stderr after the plan finishes if any hooks
+/// failed. Keeps the failure visible even when scrolling has hidden the
+/// per-hook messages.
+fn announce_hook_summary() {
+  let color = use_color_stderr();
+  let msg = "Note: one or more hooks failed during this run; see messages above.";
+
+  if color {
+    eprintln!("\x1b[33m{msg}\x1b[0m");
+  } else {
+    eprintln!("{msg}");
+  }
 }
 
 /// Check whether a project-sourced hook command is approved. If not,

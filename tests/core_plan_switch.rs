@@ -828,3 +828,90 @@ fn create_without_base_and_no_trunk_passes_none() {
 
   assert_eq!(revision, Some(None));
 }
+
+#[test]
+fn create_with_existing_bookmark_uses_bookmark_as_base() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_bookmark_exists: true,
+    trunk_bookmark: Some("main".into()),
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let revision = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { revision, .. } => Some(revision.clone()),
+    _ => None,
+  });
+
+  assert_eq!(
+    revision,
+    Some(Some("feat-x".into())),
+    "should use existing bookmark name as base, not trunk"
+  );
+}
+
+#[test]
+fn create_with_existing_bookmark_skips_bookmark_create() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_bookmark_exists: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  assert!(
+    !plan
+      .actions
+      .iter()
+      .any(|a| matches!(a, Action::JjBookmarkCreate { .. })),
+    "should not create bookmark when it already exists"
+  );
+}
+
+#[test]
+fn create_with_explicit_base_overrides_existing_bookmark() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    base: Some("develop".into()),
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_bookmark_exists: true,
+    trunk_bookmark: Some("main".into()),
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let revision = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { revision, .. } => Some(revision.clone()),
+    _ => None,
+  });
+
+  assert_eq!(
+    revision,
+    Some(Some("develop".into())),
+    "explicit --base should take precedence over existing bookmark"
+  );
+}
