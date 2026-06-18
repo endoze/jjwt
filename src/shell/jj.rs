@@ -12,13 +12,16 @@ pub trait Jj {
   /// Enumerate workspaces with name, path, and stale flag.
   fn workspace_list(&self, repo_root: &Path) -> Result<Vec<Workspace>>;
   /// `jj workspace add --name <name> <path>`, optionally checking out a
-  /// specific revision instead of the root changeset.
+  /// specific revision instead of the root changeset. When `edit_in_place`
+  /// is true, the new workspace's `@` is set directly onto `revision`
+  /// (jj edit) rather than a new empty child commit on top (jj new).
   fn workspace_add(
     &self,
     repo_root: &Path,
     name: &str,
     path: &Path,
     revision: Option<&str>,
+    edit_in_place: bool,
   ) -> Result<()>;
   /// `jj workspace forget <name>`
   fn workspace_forget(&self, repo_root: &Path, name: &str) -> Result<()>;
@@ -32,6 +35,11 @@ pub trait Jj {
   fn bookmark_exists(&self, repo_root: &Path, name: &str) -> Result<bool>;
   /// True if the bookmark's target is an ancestor of trunk.
   fn bookmark_is_merged_into_trunk(&self, repo_root: &Path, name: &str) -> Result<bool>;
+  /// For a bookmark candidate for in-place adoption, report
+  /// `(is_empty, is_occupied)`: whether its target commit is empty, and
+  /// whether that commit is already some workspace's working copy.
+  /// `(false, false)` if the bookmark is absent.
+  fn bookmark_commit_state(&self, repo_root: &Path, name: &str) -> Result<(bool, bool)>;
   /// True if `jj status` for the workspace shows any uncommitted changes.
   fn workspace_is_dirty(&self, repo_root: &Path, workspace: &str) -> Result<bool>;
   /// Per-workspace status flags (modified, untracked) for list rendering.

@@ -33,13 +33,21 @@ impl Jj for FakeJj {
     Ok(vec![])
   }
 
-  fn workspace_add(&self, _r: &Path, n: &str, p: &Path, rev: Option<&str>) -> Result<()> {
+  fn workspace_add(
+    &self,
+    _r: &Path,
+    n: &str,
+    p: &Path,
+    rev: Option<&str>,
+    edit_in_place: bool,
+  ) -> Result<()> {
     let rev_str = rev.map(|r| format!(" @{r}")).unwrap_or_default();
+    let edit_str = if edit_in_place { " edit" } else { "" };
 
     self
       .calls
       .borrow_mut()
-      .push(format!("workspace_add {n} {}{rev_str}", p.display()));
+      .push(format!("workspace_add {n} {}{rev_str}{edit_str}", p.display()));
 
     if n == "fail" {
       return Err(anyhow::anyhow!("workspace_add boom"));
@@ -87,6 +95,10 @@ impl Jj for FakeJj {
 
   fn bookmark_is_merged_into_trunk(&self, _r: &Path, _n: &str) -> Result<bool> {
     Ok(false)
+  }
+
+  fn bookmark_commit_state(&self, _r: &Path, _n: &str) -> Result<(bool, bool)> {
+    Ok((false, false))
   }
 
   fn workspace_is_dirty(&self, _r: &Path, _w: &str) -> Result<bool> {
@@ -267,6 +279,7 @@ fn execute_runs_actions_in_order() {
         name: "x".into(),
         path: PathBuf::from("/repo/.worktrees/x"),
         revision: None,
+        edit_in_place: false,
       },
       Action::JjBookmarkCreate {
         name: "x".into(),
@@ -297,6 +310,23 @@ fn execute_runs_actions_in_order() {
   );
   assert_eq!(calls_proc.len(), 1);
   assert!(calls_proc[0].starts_with("streamed echo hi"));
+  assert_eq!(printed, vec!["/repo/.worktrees/x".to_string()]);
+}
+
+#[test]
+fn execute_note_is_not_collected_into_stdout() {
+  let mut rt = Runtime::new(FakeJj::default(), FakeFs::default(), FakeProc::default());
+  let plan = Plan {
+    actions: vec![
+      Action::Note("heads up".into()),
+      Action::PrintLine("/repo/.worktrees/x".into()),
+    ],
+  };
+
+  let printed = execute(&plan, &mut rt).expect("ok");
+
+  // Notes go to stderr; only PrintLine payloads are returned for the shell
+  // wrapper to consume on stdout.
   assert_eq!(printed, vec!["/repo/.worktrees/x".to_string()]);
 }
 
@@ -346,6 +376,7 @@ fn execute_still_fatal_on_infrastructure_failure() {
         name: "fail".into(),
         path: PathBuf::from("/repo/.worktrees/fail"),
         revision: None,
+        edit_in_place: false,
       },
       Action::PrintLine("unreached".into()),
     ],

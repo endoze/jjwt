@@ -479,6 +479,10 @@ pub struct ObservedState {
   pub target_bookmark_merged: bool,
   /// Whether the bookmark exists at all (for remove).
   pub target_bookmark_exists: bool,
+  /// Target bookmark exists and points at an empty commit.
+  pub target_bookmark_empty: bool,
+  /// Target bookmark's commit is already another workspace's working copy.
+  pub target_bookmark_occupied: bool,
   /// Workspace name that `target_name` resolves to when it isn't itself a
   /// workspace. Set when `target_name` equals the trunk bookmark, in which
   /// case it resolves to "default". Mirrors worktrunk's behavior of using
@@ -502,6 +506,10 @@ pub enum Action {
     /// set, the new workspace's `@` is reparented from root onto this
     /// revision.
     revision: Option<String>,
+    /// When true, set the new workspace's `@` directly onto `revision`
+    /// (jj edit) instead of creating a new empty child commit on top
+    /// (jj new). Used when adopting an existing, empty, unoccupied bookmark.
+    edit_in_place: bool,
   },
   /// Create a jj bookmark pointing at the workspace's working copy.
   JjBookmarkCreate {
@@ -586,6 +594,9 @@ pub enum Action {
   },
   /// Print a line to stdout (consumed by the shell wrapper).
   PrintLine(String),
+  /// Print an informational note to stderr (does not affect the stdout the
+  /// shell wrapper consumes).
+  Note(String),
 }
 
 /// An ordered sequence of actions to be executed by the runtime.

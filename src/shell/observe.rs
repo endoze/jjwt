@@ -30,6 +30,8 @@ pub fn observe<J: Jj, F: Fs>(
         target_workspace_dirty: false,
         target_bookmark_merged: false,
         target_bookmark_exists: false,
+        target_bookmark_empty: false,
+        target_bookmark_occupied: false,
         target_resolved_workspace: None,
         trunk_bookmark: None,
       });
@@ -44,6 +46,8 @@ pub fn observe<J: Jj, F: Fs>(
   let mut target_workspace_dirty = false;
   let mut target_bookmark_merged = false;
   let mut target_bookmark_exists = false;
+  let mut target_bookmark_empty = false;
+  let mut target_bookmark_occupied = false;
   let mut target_resolved_workspace = None;
 
   if let Some(name) = target_name {
@@ -75,6 +79,11 @@ pub fn observe<J: Jj, F: Fs>(
     target_bookmark_exists = jj.bookmark_exists(&repo_root, name)?;
     if target_bookmark_exists {
       target_bookmark_merged = jj.bookmark_is_merged_into_trunk(&repo_root, name)?;
+
+      let (empty, occupied) = jj.bookmark_commit_state(&repo_root, name)?;
+
+      target_bookmark_empty = empty;
+      target_bookmark_occupied = occupied;
     }
   }
 
@@ -89,6 +98,8 @@ pub fn observe<J: Jj, F: Fs>(
     target_workspace_dirty,
     target_bookmark_merged,
     target_bookmark_exists,
+    target_bookmark_empty,
+    target_bookmark_occupied,
     target_resolved_workspace,
     trunk_bookmark,
   })

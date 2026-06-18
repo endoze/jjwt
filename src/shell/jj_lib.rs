@@ -248,6 +248,7 @@ impl Jj for JjLib {
     name: &str,
     path: &Path,
     revision: Option<&str>,
+    edit_in_place: bool,
   ) -> Result<()> {
     std::fs::create_dir_all(path).context("failed to create workspace dir")?;
 
@@ -279,8 +280,13 @@ impl Jj for JjLib {
       let mut tx = repo.start_transaction();
       let ws_name = WorkspaceNameBuf::from(name);
 
-      pollster::block_on(tx.repo_mut().check_out(ws_name, &commit))
-        .context("failed to check out revision")?;
+      if edit_in_place {
+        pollster::block_on(tx.repo_mut().edit(ws_name, &commit))
+          .context("failed to edit revision")?;
+      } else {
+        pollster::block_on(tx.repo_mut().check_out(ws_name, &commit))
+          .context("failed to check out revision")?;
+      }
 
       pollster::block_on(tx.repo_mut().rebase_descendants())
         .context("failed to rebase descendants")?;
@@ -394,6 +400,25 @@ impl Jj for JjLib {
       .index()
       .is_ancestor(bookmark_id, &trunk_id)
       .context("index error")
+  }
+
+  fn bookmark_commit_state(&self, _repo_root: &Path, name: &str) -> Result<(bool, bool)> {
+    let repo = self.repo();
+    let ref_name = RefName::new(name);
+
+    let Some(commit_id) = repo.view().get_local_bookmark(ref_name).as_normal().cloned() else {
+      return Ok((false, false));
+    };
+
+    let occupied = repo
+      .view()
+      .wc_commit_ids()
+      .values()
+      .any(|id| *id == commit_id);
+    let commit = self.get_commit(&commit_id)?;
+    let empty = pollster::block_on(commit.is_empty(&*repo))?;
+
+    Ok((empty, occupied))
   }
 
   fn workspace_is_dirty(&self, _repo_root: &Path, workspace: &str) -> Result<bool> {

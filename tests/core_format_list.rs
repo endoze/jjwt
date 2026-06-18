@@ -1180,6 +1180,7 @@ fn dry_run_workspace_add() {
     name: "feat".into(),
     path: PathBuf::from("/repo/.worktrees/feat"),
     revision: None,
+    edit_in_place: false,
   }];
 
   let out = format_dry_run(&actions);
@@ -1333,6 +1334,7 @@ fn dry_run_json_workspace_add() {
     name: "feat".into(),
     path: PathBuf::from("/repo/.worktrees/feat"),
     revision: None,
+    edit_in_place: false,
   }];
 
   let out = format_dry_run_json(&actions);

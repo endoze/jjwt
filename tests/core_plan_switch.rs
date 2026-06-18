@@ -118,6 +118,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
       name: "feat-x".into(),
       path: ws_path.clone(),
       revision: None,
+      edit_in_place: false,
     }
   );
   assert_eq!(
@@ -913,5 +914,150 @@ fn create_with_explicit_base_overrides_existing_bookmark() {
     revision,
     Some(Some("develop".into())),
     "explicit --base should take precedence over existing bookmark"
+  );
+}
+
+#[test]
+fn create_adopts_empty_unoccupied_bookmark_in_place() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_bookmark_exists: true,
+    target_bookmark_empty: true,
+    target_bookmark_occupied: false,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let edit_in_place = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { edit_in_place, .. } => Some(*edit_in_place),
+    _ => None,
+  });
+
+  assert_eq!(
+    edit_in_place,
+    Some(true),
+    "an empty, unoccupied bookmark should be adopted in place"
+  );
+  assert!(
+    !plan
+      .actions
+      .iter()
+      .any(|a| matches!(a, Action::Note(_))),
+    "no divergence note when the bookmark is unoccupied"
+  );
+}
+
+#[test]
+fn create_does_not_edit_in_place_for_occupied_empty_bookmark() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_bookmark_exists: true,
+    target_bookmark_empty: true,
+    target_bookmark_occupied: true,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let edit_in_place = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { edit_in_place, .. } => Some(*edit_in_place),
+    _ => None,
+  });
+
+  assert_eq!(
+    edit_in_place,
+    Some(false),
+    "an occupied bookmark must fall back to a new child to avoid divergence"
+  );
+  assert!(
+    plan
+      .actions
+      .iter()
+      .any(|a| matches!(a, Action::Note(_))),
+    "a note should explain why the bookmark was not adopted in place"
+  );
+}
+
+#[test]
+fn create_does_not_edit_in_place_for_non_empty_bookmark() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_bookmark_exists: true,
+    target_bookmark_empty: false,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let edit_in_place = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { edit_in_place, .. } => Some(*edit_in_place),
+    _ => None,
+  });
+
+  assert_eq!(
+    edit_in_place,
+    Some(false),
+    "a non-empty bookmark keeps the new-child-on-top behavior"
+  );
+  assert!(
+    !plan
+      .actions
+      .iter()
+      .any(|a| matches!(a, Action::Note(_))),
+    "no note for the ordinary non-empty case"
+  );
+}
+
+#[test]
+fn create_with_explicit_base_never_edits_in_place() {
+  let cfg = MergedConfig::default();
+  let args = SwitchArgs {
+    name: "feat-x".into(),
+    create: true,
+    base: Some("develop".into()),
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    target_bookmark_exists: true,
+    target_bookmark_empty: true,
+    target_bookmark_occupied: false,
+    ..Default::default()
+  };
+
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  let edit_in_place = plan.actions.iter().find_map(|a| match a {
+    Action::JjWorkspaceAdd { edit_in_place, .. } => Some(*edit_in_place),
+    _ => None,
+  });
+
+  assert_eq!(
+    edit_in_place,
+    Some(false),
+    "an explicit --base should branch off the base, not edit the bookmark in place"
   );
 }

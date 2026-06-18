@@ -203,11 +203,27 @@ fn plan_switch_create(
     .or(obs.trunk_bookmark.as_ref())
     .cloned();
 
+  // Adopting an existing bookmark of the same name (no explicit `--base`).
+  // When that bookmark's commit is empty and not already checked out by
+  // another workspace, land `@` directly on it (jj edit) instead of stacking
+  // a redundant empty change on top (jj new).
+  let adopting = args.base.is_none() && obs.target_bookmark_exists;
+  let edit_in_place = adopting && obs.target_bookmark_empty && !obs.target_bookmark_occupied;
+
   plan.push(Action::JjWorkspaceAdd {
     name: args.name.clone(),
     path: ws_path.clone(),
     revision,
+    edit_in_place,
   });
+
+  if adopting && obs.target_bookmark_empty && obs.target_bookmark_occupied {
+    plan.push(Action::Note(format!(
+      "'{}' points at a commit already checked out in another workspace; \
+       created a new change on top to avoid divergence.",
+      args.name
+    )));
+  }
 
   if !obs.target_bookmark_exists {
     plan.push(Action::JjBookmarkCreate {

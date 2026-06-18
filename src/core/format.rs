@@ -1142,6 +1142,7 @@ fn dry_run_entry(action: &Action) -> Option<DryRunEntry<'_>> {
     } => Some(DryRunEntry::RunHook { name, rendered_cmd }),
     Action::Exec { rendered_cmd, .. } => Some(DryRunEntry::Exec { rendered_cmd }),
     Action::PrintLine(_) => None,
+    Action::Note(_) => None,
   }
 }
 

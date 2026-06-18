@@ -69,9 +69,10 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         name,
         path,
         revision,
+        edit_in_place,
       } => {
         rt.jj
-          .workspace_add(&rt.repo_root, name, path, revision.as_deref())?;
+          .workspace_add(&rt.repo_root, name, path, revision.as_deref(), *edit_in_place)?;
       }
       Action::JjBookmarkCreate { name, workspace } => {
         rt.jj.bookmark_create(&rt.repo_root, name, workspace)?;
@@ -146,6 +147,9 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
       Action::PrintLine(s) => {
         printed.push(s.clone());
       }
+      Action::Note(s) => {
+        announce_note(s);
+      }
     }
   }
 
@@ -201,6 +205,18 @@ fn announce_hook_failure(name: &str, status: i32, rendered_cmd: &str) {
     eprintln!("\x1b[31m{header}\x1b[0m");
   } else {
     eprintln!("{header}");
+  }
+}
+
+/// Print an informational note to stderr. Stdout is reserved for the
+/// `PrintLine` payload the shell wrapper consumes, so notes go to stderr.
+fn announce_note(msg: &str) {
+  let color = use_color_stderr();
+
+  if color {
+    eprintln!("\x1b[33m{msg}\x1b[0m");
+  } else {
+    eprintln!("{msg}");
   }
 }
 
