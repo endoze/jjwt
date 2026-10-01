@@ -6,7 +6,7 @@ pub mod filters;
 pub mod format;
 /// Bash syntax highlighting for hook command echoes.
 pub mod highlight;
-/// Plan construction for switch, remove, list, hook, alias, relocate, and prune.
+/// Plan construction for switch, remove, list, hook, alias, and relocate.
 pub mod plan;
 /// Minijinja template rendering with hook/alias variable context.
 pub mod template;

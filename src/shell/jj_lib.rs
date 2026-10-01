@@ -10,7 +10,6 @@ use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::matchers::EverythingMatcher;
-use jj_lib::op_store::RefTarget;
 use jj_lib::ref_name::{RefName, WorkspaceName, WorkspaceNameBuf};
 use jj_lib::repo::{ReadonlyRepo, Repo as _, StoreFactories};
 use jj_lib::settings::UserSettings;
@@ -28,6 +27,8 @@ pub struct JjLib {
   repo_root: PathBuf,
   /// Worktree-path template for resolving workspace directories.
   worktree_path_template: String,
+  /// What `trunk()` resolved to at load time.
+  trunk: Option<(types::Trunk, CommitId)>,
 }
 
 impl JjLib {
@@ -71,11 +72,13 @@ impl JjLib {
     // Load repo after snapshot — the op head may have changed.
     let repo =
       pollster::block_on(workspace.repo_loader().load_at_head()).context("failed to load repo")?;
+    let trunk = query_trunk(&repo_root);
 
     Ok(Self {
       repo: RwLock::new(repo),
       repo_root,
       worktree_path_template,
+      trunk,
     })
   }
 
@@ -84,76 +87,29 @@ impl JjLib {
     self.repo.read().unwrap_or_else(|e| e.into_inner()).clone()
   }
 
-  /// Find the trunk bookmark name by scanning for main/master/trunk with
-  /// a remote-tracking ref. Returns None if no match found.
-  fn resolve_trunk(&self) -> Option<String> {
+  /// Resolve a workspace name to its working-copy CommitId.
+  fn wc_commit_id(&self, workspace: &str) -> Result<CommitId> {
     let repo = self.repo();
-    let view = repo.view();
-
-    // Collect names that have at least one remote-tracking ref.
-    let remote_names: HashSet<String> = view
-      .all_remote_bookmarks()
-      .map(|(sym, _)| sym.name.as_str().to_string())
-      .collect();
-
-    // Priority order matches jj's default `trunk()` alias.
-    for candidate in &["main", "master", "trunk"] {
-      let name = RefName::new(candidate);
-
-      if view.get_local_bookmark(name).is_present() && remote_names.contains(*candidate) {
-        return Some(candidate.to_string());
-      }
-    }
-
-    // Fallback: any bookmark with a remote-tracking ref.
-    for (name, target) in view.local_bookmarks() {
-      if target.is_present() && remote_names.contains(name.as_str()) {
-        return Some(name.as_str().to_string());
-      }
-    }
-
-    None
-  }
-
-  /// Map an external workspace name to jj's internal workspace name, given
-  /// a pre-resolved trunk bookmark. Pure — no locking or I/O. Callers in
-  /// hot loops should resolve trunk once and pass it in to avoid repeated
-  /// `resolve_trunk()` work.
-  fn internal_ws_name_with_trunk<'a>(name: &'a str, trunk: Option<&str>) -> &'a str {
-    if trunk == Some(name) {
-      "default"
-    } else {
-      name
-    }
-  }
-
-  /// Map an external workspace name (which may be the trunk bookmark name
-  /// for the default workspace) back to jj's internal workspace name.
-  fn internal_ws_name(&self, name: &str) -> String {
-    let trunk = self.resolve_trunk();
-
-    Self::internal_ws_name_with_trunk(name, trunk.as_deref()).to_string()
-  }
-
-  /// Resolve a workspace name to its working-copy CommitId, given a
-  /// pre-resolved trunk bookmark name. Hot-loop variant of `wc_commit_id`.
-  fn wc_commit_id_with_trunk(&self, workspace: &str, trunk: Option<&str>) -> Result<CommitId> {
-    let repo = self.repo();
-    let internal = Self::internal_ws_name_with_trunk(workspace, trunk);
-    let ws_name = WorkspaceName::new(internal);
 
     repo
       .view()
-      .get_wc_commit_id(ws_name)
+      .get_wc_commit_id(WorkspaceName::new(workspace))
       .cloned()
       .ok_or_else(|| anyhow::anyhow!("workspace '{workspace}' not found"))
   }
 
-  /// Resolve a workspace name to its working-copy CommitId.
-  fn wc_commit_id(&self, workspace: &str) -> Result<CommitId> {
-    let trunk = self.resolve_trunk();
+  /// Resolve a local bookmark name or a full hex commit id to a commit.
+  fn resolve_revision(&self, rev: &str) -> Result<Commit> {
+    let repo = self.repo();
+    let id = repo
+      .view()
+      .get_local_bookmark(RefName::new(rev))
+      .as_normal()
+      .cloned()
+      .or_else(|| CommitId::try_from_hex(rev));
 
-    self.wc_commit_id_with_trunk(workspace, trunk.as_deref())
+    id.and_then(|id| repo.store().get_commit(&id).ok())
+      .ok_or_else(|| anyhow::anyhow!("revision '{rev}' not found"))
   }
 
   /// Load a Commit by its CommitId.
@@ -163,13 +119,23 @@ impl JjLib {
     repo.store().get_commit(id).context("failed to load commit")
   }
 
-  /// Resolve the trunk bookmark to a CommitId. Returns None if no trunk.
+  /// The commit `trunk()` resolved to, or `None` when it is `root()`.
   fn trunk_commit_id(&self) -> Option<CommitId> {
-    let trunk_name = self.resolve_trunk()?;
-    let repo = self.repo();
-    let name = RefName::new(&trunk_name);
+    self.trunk.as_ref().map(|(_, id)| id.clone())
+  }
 
-    repo.view().get_local_bookmark(name).as_normal().cloned()
+  /// The commit that holds a workspace's work: `@`, or `@-` when `@` is an
+  /// empty, undescribed, single-parent working-copy commit.
+  fn work_head(&self, wc_id: &CommitId) -> Result<CommitId> {
+    let commit = self.get_commit(wc_id)?;
+    let repo = self.repo();
+    let empty = pollster::block_on(commit.is_empty(&*repo))?;
+
+    if empty && commit.description().is_empty() && commit.parent_ids().len() == 1 {
+      return Ok(commit.parent_ids()[0].clone());
+    }
+
+    Ok(wc_id.clone())
   }
 
   /// Count commits in `roots..heads` using revset walk_revs.
@@ -192,6 +158,24 @@ impl JjLib {
     Ok(count)
   }
 
+  /// Reload the repo at the current op head after an out-of-process write.
+  fn reload(&self) -> Result<()> {
+    let settings = minimal_settings()?;
+    let ws = Workspace::load(
+      &settings,
+      &self.repo_root,
+      &StoreFactories::default(),
+      &default_working_copy_factories(),
+    )
+    .context("failed to load workspace")?;
+    let repo =
+      pollster::block_on(ws.repo_loader().load_at_head()).context("failed to load repo")?;
+
+    self.swap_repo(repo);
+
+    Ok(())
+  }
+
   /// Replace the stored repo after a write transaction.
   fn swap_repo(&self, new_repo: Arc<ReadonlyRepo>) {
     let mut guard = self.repo.write().unwrap_or_else(|e| e.into_inner());
@@ -208,7 +192,6 @@ impl Jj for JjLib {
   fn workspace_list(&self, _repo_root: &Path) -> Result<Vec<types::Workspace>> {
     let repo = self.repo();
     let wc_ids = repo.view().wc_commit_ids();
-    let trunk_name = self.resolve_trunk();
     let current_op_id = repo.op_id();
     let settings = minimal_settings()?;
     let store_factories = StoreFactories::default();
@@ -216,27 +199,14 @@ impl Jj for JjLib {
     let mut workspaces = Vec::with_capacity(wc_ids.len());
 
     for ws_name in wc_ids.keys() {
-      let internal_name = ws_name.as_str().to_string();
-      let path = workspace_dir(&self.repo_root, &internal_name, &self.worktree_path_template);
-
-      // Display the default workspace using the trunk bookmark name
-      // (e.g. "master" or "main") to match worktrunk's behavior.
-      let display_name = if internal_name == "default" {
-        trunk_name.as_deref().unwrap_or(&internal_name).to_string()
-      } else {
-        internal_name
-      };
-
+      let name = ws_name.as_str().to_string();
+      let path = workspace_dir(&self.repo_root, &name, &self.worktree_path_template);
       let stale = path.is_dir()
         && Workspace::load(&settings, &path, &store_factories, &wc_factories)
           .map(|ws| ws.working_copy().operation_id() != current_op_id)
           .unwrap_or(false);
 
-      workspaces.push(types::Workspace {
-        name: display_name,
-        path,
-        stale,
-      });
+      workspaces.push(types::Workspace { name, path, stale });
     }
 
     Ok(workspaces)
@@ -250,6 +220,8 @@ impl Jj for JjLib {
     revision: Option<&str>,
     edit_in_place: bool,
   ) -> Result<()> {
+    let base = revision.map(|rev| self.resolve_revision(rev)).transpose()?;
+
     std::fs::create_dir_all(path).context("failed to create workspace dir")?;
 
     let repo = self.repo();
@@ -266,17 +238,8 @@ impl Jj for JjLib {
 
     self.swap_repo(new_repo);
 
-    if let Some(rev) = revision {
+    if let (Some(rev), Some(commit)) = (revision, base) {
       let repo = self.repo();
-      let ref_name = RefName::new(rev);
-      let commit_id = repo
-        .view()
-        .get_local_bookmark(ref_name)
-        .as_normal()
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("bookmark '{rev}' not found"))?;
-      let commit = self.get_commit(&commit_id)?;
-
       let mut tx = repo.start_transaction();
       let ws_name = WorkspaceNameBuf::from(name);
 
@@ -301,11 +264,24 @@ impl Jj for JjLib {
     Ok(())
   }
 
+  fn workspace_snapshot(&self, path: &Path, stale: bool) -> Result<()> {
+    if !path.is_dir() {
+      return Ok(());
+    }
+
+    if stale {
+      run_jj(path, &["workspace", "update-stale"])?;
+    }
+
+    run_jj(path, &["util", "snapshot"])?;
+
+    self.reload()
+  }
+
   fn workspace_forget(&self, _repo_root: &Path, name: &str) -> Result<()> {
     let repo = self.repo();
     let mut tx = repo.start_transaction();
-    let internal = self.internal_ws_name(name);
-    let ws_name = WorkspaceNameBuf::from(internal.as_str());
+    let ws_name = WorkspaceNameBuf::from(name);
 
     pollster::block_on(tx.repo_mut().remove_wc_commit(&ws_name))
       .context("workspace forget failed")?;
@@ -343,63 +319,11 @@ impl Jj for JjLib {
     Ok(())
   }
 
-  fn bookmark_create(&self, _repo_root: &Path, name: &str, workspace: &str) -> Result<()> {
-    let commit_id = self.wc_commit_id(workspace)?;
-    let repo = self.repo();
-    let mut tx = repo.start_transaction();
-    let ref_name = RefName::new(name);
-
-    tx.repo_mut()
-      .set_local_bookmark_target(ref_name, RefTarget::normal(commit_id));
-
-    let new_repo = pollster::block_on(tx.commit(format!("create bookmark {name}")))
-      .context("transaction commit failed")?;
-
-    self.swap_repo(new_repo);
-
-    Ok(())
-  }
-
-  fn bookmark_delete(&self, _repo_root: &Path, name: &str) -> Result<()> {
-    let repo = self.repo();
-    let mut tx = repo.start_transaction();
-    let ref_name = RefName::new(name);
-
-    tx.repo_mut()
-      .set_local_bookmark_target(ref_name, RefTarget::absent());
-
-    let new_repo = pollster::block_on(tx.commit(format!("delete bookmark {name}")))
-      .context("transaction commit failed")?;
-
-    self.swap_repo(new_repo);
-
-    Ok(())
-  }
-
   fn bookmark_exists(&self, _repo_root: &Path, name: &str) -> Result<bool> {
     let repo = self.repo();
     let ref_name = RefName::new(name);
 
     Ok(repo.view().get_local_bookmark(ref_name).is_present())
-  }
-
-  fn bookmark_is_merged_into_trunk(&self, _repo_root: &Path, name: &str) -> Result<bool> {
-    let repo = self.repo();
-    let ref_name = RefName::new(name);
-    let bookmark_target = repo.view().get_local_bookmark(ref_name);
-
-    let Some(bookmark_id) = bookmark_target.as_normal() else {
-      return Ok(false);
-    };
-
-    let Some(trunk_id) = self.trunk_commit_id() else {
-      return Ok(false);
-    };
-
-    repo
-      .index()
-      .is_ancestor(bookmark_id, &trunk_id)
-      .context("index error")
   }
 
   fn bookmark_commit_state(&self, _repo_root: &Path, name: &str) -> Result<(bool, bool)> {
@@ -421,16 +345,6 @@ impl Jj for JjLib {
     Ok((empty, occupied))
   }
 
-  fn workspace_is_dirty(&self, _repo_root: &Path, workspace: &str) -> Result<bool> {
-    let commit_id = self.wc_commit_id(workspace)?;
-    let commit = self.get_commit(&commit_id)?;
-    let repo = self.repo();
-
-    let is_empty = pollster::block_on(commit.is_empty(&*repo))?;
-
-    Ok(!is_empty)
-  }
-
   fn workspace_status(&self, _repo_root: &Path, workspace: &str) -> Result<(bool, bool)> {
     let commit_id = self.wc_commit_id(workspace)?;
     let commit = self.get_commit(&commit_id)?;
@@ -446,7 +360,6 @@ impl Jj for JjLib {
     workspaces: &[String],
   ) -> Result<HashMap<String, CommitInfo>> {
     let repo = self.repo();
-    let trunk = self.resolve_trunk();
     let now = std::time::SystemTime::now()
       .duration_since(std::time::UNIX_EPOCH)
       .map(|d| d.as_secs() as i64)
@@ -455,8 +368,7 @@ impl Jj for JjLib {
     let mut result = HashMap::with_capacity(workspaces.len());
 
     for ws_name in workspaces {
-      let internal = Self::internal_ws_name_with_trunk(ws_name, trunk.as_deref());
-      let ws = WorkspaceName::new(internal);
+      let ws = WorkspaceName::new(ws_name);
 
       let Some(commit_id) = repo.view().get_wc_commit_id(ws) else {
         continue;
@@ -527,22 +439,16 @@ impl Jj for JjLib {
     _repo_root: &Path,
     workspaces: &[String],
   ) -> Result<HashMap<String, (u32, u32)>> {
-    let trunk = self.resolve_trunk();
-    let trunk_id = trunk.as_deref().and_then(|name| {
-      let repo = self.repo();
-      let ref_name = RefName::new(name);
-
-      repo.view().get_local_bookmark(ref_name).as_normal().cloned()
-    });
+    let trunk_id = self.trunk_commit_id();
     let mut result = HashMap::with_capacity(workspaces.len());
 
     for ws_name in workspaces {
-      let ws_id = self.wc_commit_id_with_trunk(ws_name, trunk.as_deref())?;
+      let head = self.work_head(&self.wc_commit_id(ws_name)?)?;
 
       let (ahead, behind) = match &trunk_id {
         Some(tid) => {
-          let a = self.count_between(std::slice::from_ref(tid), std::slice::from_ref(&ws_id))?;
-          let b = self.count_between(std::slice::from_ref(&ws_id), std::slice::from_ref(tid))?;
+          let a = self.count_between(std::slice::from_ref(tid), std::slice::from_ref(&head))?;
+          let b = self.count_between(std::slice::from_ref(&head), std::slice::from_ref(tid))?;
 
           (a, b)
         }
@@ -553,17 +459,6 @@ impl Jj for JjLib {
     }
 
     Ok(result)
-  }
-
-  fn bookmarks_with_remote(&self, _repo_root: &Path) -> Result<HashSet<String>> {
-    let repo = self.repo();
-    let set: HashSet<String> = repo
-      .view()
-      .all_remote_bookmarks()
-      .map(|(sym, _)| sym.name.as_str().to_string())
-      .collect();
-
-    Ok(set)
   }
 
   fn bookmarks_local(&self, _repo_root: &Path) -> Result<Vec<String>> {
@@ -578,26 +473,70 @@ impl Jj for JjLib {
     Ok(names)
   }
 
-  fn bookmark_sets(&self, _repo_root: &Path) -> Result<(Vec<String>, HashSet<String>)> {
+  fn workspace_bookmarks_batch(
+    &self,
+    _repo_root: &Path,
+    workspaces: &[String],
+  ) -> Result<HashMap<String, Vec<types::WorkspaceBookmark>>> {
+    let mut out = HashMap::with_capacity(workspaces.len());
+    let Some(trunk_id) = self.trunk_commit_id() else {
+      return Ok(out);
+    };
     let repo = self.repo();
     let view = repo.view();
+    let mut by_commit: HashMap<CommitId, Vec<String>> = HashMap::new();
 
-    let all_local: Vec<String> = view
-      .local_bookmarks()
-      .filter(|(_, target)| target.is_present())
-      .map(|(name, _)| name.as_str().to_string())
-      .collect();
+    for (name, target) in view.local_bookmarks() {
+      if let Some(id) = target.as_normal() {
+        by_commit
+          .entry(id.clone())
+          .or_default()
+          .push(name.as_str().to_string());
+      }
+    }
 
-    let with_remote: HashSet<String> = view
+    let pushed: HashSet<String> = view
       .all_remote_bookmarks()
+      .filter(|(sym, r)| {
+        sym.remote != jj_lib::git::REMOTE_NAME_FOR_LOCAL_GIT_REPO
+          && r.is_tracked()
+          && r.is_present()
+      })
       .map(|(sym, _)| sym.name.as_str().to_string())
       .collect();
 
-    Ok((all_local, with_remote))
+    for ws in workspaces {
+      let wc = self.wc_commit_id(ws)?;
+      let revset = jj_lib::revset::walk_revs(
+        &*repo,
+        std::slice::from_ref(&wc),
+        std::slice::from_ref(&trunk_id),
+      )
+      .context("walk_revs failed")?;
+      let stream = revset.stream();
+      let mut found = Vec::new();
+
+      futures::pin_mut!(stream);
+
+      while let Some(item) = pollster::block_on(stream.next()) {
+        let id = item.context("revset stream error")?;
+
+        for name in by_commit.get(&id).into_iter().flatten() {
+          found.push(types::WorkspaceBookmark {
+            name: name.clone(),
+            has_remote: pushed.contains(name),
+          });
+        }
+      }
+
+      out.insert(ws.clone(), found);
+    }
+
+    Ok(out)
   }
 
-  fn trunk_bookmark(&self, _repo_root: &Path) -> Result<Option<String>> {
-    Ok(self.resolve_trunk())
+  fn trunk(&self, _repo_root: &Path) -> Result<Option<types::Trunk>> {
+    Ok(self.trunk.as_ref().map(|(t, _)| t.clone()))
   }
 
   fn git_fetch(&self, repo_root: &Path) -> Result<()> {
@@ -620,8 +559,7 @@ impl Jj for JjLib {
 
   fn workspace_rename(&self, _repo_root: &Path, old: &str, new: &str) -> Result<()> {
     let repo = self.repo();
-    let old_internal = self.internal_ws_name(old);
-    let old_ws = WorkspaceName::new(&old_internal);
+    let old_ws = WorkspaceName::new(old);
 
     let commit_id = repo
       .view()
@@ -634,7 +572,7 @@ impl Jj for JjLib {
 
     let _ = tx.repo_mut().set_wc_commit(new_ws, commit_id);
 
-    let old_ws_buf = WorkspaceNameBuf::from(old_internal.as_str());
+    let old_ws_buf = WorkspaceNameBuf::from(old);
 
     pollster::block_on(tx.repo_mut().remove_wc_commit(&old_ws_buf))
       .context("workspace rename failed")?;
@@ -643,33 +581,6 @@ impl Jj for JjLib {
       .context("failed to rebase descendants")?;
 
     let new_repo = pollster::block_on(tx.commit(format!("rename workspace {old} → {new}")))
-      .context("transaction commit failed")?;
-
-    self.swap_repo(new_repo);
-
-    Ok(())
-  }
-
-  fn bookmark_rename(&self, _repo_root: &Path, old: &str, new: &str) -> Result<()> {
-    let repo = self.repo();
-    let old_ref = RefName::new(old);
-    let target = repo.view().get_local_bookmark(old_ref).clone();
-
-    if !target.is_present() {
-      return Err(anyhow::anyhow!("bookmark '{old}' not found"));
-    }
-
-    let mut tx = repo.start_transaction();
-    let new_ref = RefName::new(new);
-
-    tx.repo_mut().set_local_bookmark_target(new_ref, target);
-
-    let old_ref = RefName::new(old);
-
-    tx.repo_mut()
-      .set_local_bookmark_target(old_ref, RefTarget::absent());
-
-    let new_repo = pollster::block_on(tx.commit(format!("rename bookmark {old} → {new}")))
       .context("transaction commit failed")?;
 
     self.swap_repo(new_repo);
@@ -776,14 +687,35 @@ fn materialize_tree_value(
   buf
 }
 
-/// Trigger a working-copy snapshot via `jj debug snapshot` so the repo
+/// Run `jj <args>` in `dir`, failing with jj's stderr on a non-zero exit.
+fn run_jj(dir: &Path, args: &[&str]) -> Result<()> {
+  let jj = which::which("jj").context("jj not found on PATH")?;
+  let out = std::process::Command::new(jj)
+    .current_dir(dir)
+    .args(args)
+    .output()
+    .context("failed to spawn jj")?;
+
+  if !out.status.success() {
+    anyhow::bail!(
+      "`jj {}` failed in {}: {}",
+      args.join(" "),
+      dir.display(),
+      String::from_utf8_lossy(&out.stderr).trim()
+    );
+  }
+
+  Ok(())
+}
+
+/// Trigger a working-copy snapshot via `jj util snapshot` so the repo
 /// state reflects current disk changes. Silently ignores failures (e.g. if
 /// `jj` is not on PATH).
 fn trigger_snapshot(repo_root: &Path) {
   if let Ok(jj) = which::which("jj") {
     let _ = std::process::Command::new(jj)
       .current_dir(repo_root)
-      .arg("debug")
+      .arg("util")
       .arg("snapshot")
       .stdout(std::process::Stdio::null())
       .stderr(std::process::Stdio::null())
@@ -805,4 +737,39 @@ fn count_lines(data: &[u8]) -> u32 {
   } else {
     count
   }
+}
+
+/// Template printing `commit_id\tremote bookmark names` for a non-root commit.
+const TRUNK_TEMPLATE: &str =
+  r#"if(!root, commit_id ++ "\t" ++ remote_bookmarks.map(|b| b.name()).join(" ") ++ "\n")"#;
+
+/// Resolve `trunk()` through the jj CLI so user and default revset aliases
+/// apply. The default alias lives in jj-cli's config, not in jj-lib.
+fn query_trunk(repo_root: &Path) -> Option<(types::Trunk, CommitId)> {
+  let jj = which::which("jj").ok()?;
+  let out = std::process::Command::new(jj)
+    .arg("-R")
+    .arg(repo_root)
+    .args([
+      "--ignore-working-copy",
+      "--color",
+      "never",
+      "log",
+      "--no-graph",
+      "-r",
+      "trunk()",
+      "-T",
+      TRUNK_TEMPLATE,
+    ])
+    .output()
+    .ok()?;
+
+  if !out.status.success() {
+    return None;
+  }
+
+  let trunk = types::Trunk::parse(&String::from_utf8_lossy(&out.stdout))?;
+  let id = CommitId::try_from_hex(&trunk.commit_id)?;
+
+  Some((trunk, id))
 }

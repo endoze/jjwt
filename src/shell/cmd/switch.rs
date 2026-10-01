@@ -99,12 +99,7 @@ fn resolve_shortcut<J: Jj, F: crate::shell::fs::Fs>(
   let cur = probe.current_workspace;
 
   let resolved = match name {
-    "^" => {
-      let repo_root = jj.repo_root(cwd)?;
-
-      jj.trunk_bookmark(&repo_root)?
-        .ok_or_else(|| anyhow::anyhow!("`^` requires a trunk bookmark; none found"))?
-    }
+    "^" => "default".to_string(),
     "@" => cur
       .as_ref()
       .ok_or_else(|| anyhow::anyhow!("`@` requires being inside a known workspace"))?
@@ -152,7 +147,7 @@ fn should_auto_create<J: Jj, F: crate::shell::fs::Fs>(
   let probe = observe(jj, fs, cwd, Some(resolved_name), worktree_path_template)?;
   let ws_exists = probe.workspaces.iter().any(|w| w.name == resolved_name);
 
-  if ws_exists {
+  if ws_exists || probe.target_resolved_workspace.is_some() {
     return Ok(false);
   }
 
@@ -202,7 +197,13 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, mut args: SwitchArgs) -> Resu
     resolve_shortcut(&args.name, cwd, &jj, &fs, &cfg.worktree_path_template)?;
 
   if let Some(ref base) = args.base {
-    let (resolved_base, _) = resolve_shortcut(base, cwd, &jj, &fs, &cfg.worktree_path_template)?;
+    let resolved_base = if base == "^" {
+      jj.trunk(&jj.repo_root(cwd)?)?
+        .map(|t| t.commit_id)
+        .ok_or_else(|| anyhow::anyhow!("`--base ^` requires `trunk()` to resolve to a commit"))?
+    } else {
+      resolve_shortcut(base, cwd, &jj, &fs, &cfg.worktree_path_template)?.0
+    };
 
     args.base = Some(resolved_base);
   }

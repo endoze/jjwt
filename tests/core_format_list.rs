@@ -22,7 +22,6 @@ fn row(name: &str) -> ListRow {
     name: name.into(),
     path,
     display_path,
-    kind: ListRowKind::Workspace,
     url: String::new(),
     is_current: false,
     is_default: name == "default",
@@ -613,23 +612,15 @@ fn switch_json_created_false() {
 // ── format_remove_json tests ──────────────────────────────────────────
 
 #[test]
-fn remove_json_bookmark_deleted_true() {
+fn remove_json_has_name_and_path_only() {
   let path = PathBuf::from("/repo/.worktrees/feat-x");
-  let out = format_remove_json("feat-x", &path, true);
+  let out = format_remove_json("feat-x", &path);
   let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid json");
 
-  assert_eq!(parsed["name"], "feat-x");
-  assert_eq!(parsed["path"], "/repo/.worktrees/feat-x");
-  assert_eq!(parsed["bookmark_deleted"], true);
-}
-
-#[test]
-fn remove_json_bookmark_deleted_false() {
-  let path = PathBuf::from("/repo/.worktrees/feat-x");
-  let out = format_remove_json("feat-x", &path, false);
-  let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid json");
-
-  assert_eq!(parsed["bookmark_deleted"], false);
+  assert_eq!(
+    parsed,
+    serde_json::json!({ "name": "feat-x", "path": "/repo/.worktrees/feat-x" })
+  );
 }
 
 // ── format_list_json tests ────────────────────────────────────────────
@@ -642,7 +633,6 @@ fn list_json_single_workspace() {
 
   assert_eq!(parsed.len(), 1);
   assert_eq!(parsed[0]["name"], "default");
-  assert_eq!(parsed[0]["kind"], "workspace");
   assert_eq!(parsed[0]["is_default"], true);
   assert_eq!(parsed[0]["commit"], "00000000");
   assert_eq!(parsed[0]["age"], "9h");
@@ -781,32 +771,6 @@ fn list_json_ci_status_values() {
 
     assert_eq!(parsed[0]["ci_status"], expected);
   }
-}
-
-#[test]
-fn list_json_bookmark_row_kind() {
-  let r = ListRow {
-    name: "orphan".into(),
-    path: PathBuf::new(),
-    display_path: String::new(),
-    kind: ListRowKind::Bookmark,
-    url: String::new(),
-    is_current: false,
-    is_default: false,
-    status: StatusFlags::default(),
-    head_diff: LineDiff::default(),
-    vs_trunk: AheadBehind::default(),
-    commit: String::new(),
-    age: String::new(),
-    message: String::new(),
-    ci_status: CiStatus::None,
-    summary: String::new(),
-  };
-
-  let out = format_list_json(&[r]);
-  let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
-
-  assert_eq!(parsed[0]["kind"], "bookmark");
 }
 
 #[test]
@@ -965,37 +929,6 @@ fn styled_ci_status_pending() {
   let out = format_list_table(&[r], true, None, true);
 
   assert!(strip_ansi(&out).contains("◌"));
-}
-
-// ── Bookmark row gutter and path coverage ───────────────────────────────
-
-#[test]
-fn bookmark_row_uses_slash_gutter_and_empty_path() {
-  let bookmark = ListRow {
-    name: "orphan".into(),
-    path: PathBuf::new(),
-    display_path: String::new(),
-    kind: ListRowKind::Bookmark,
-    url: String::new(),
-    is_current: false,
-    is_default: false,
-    status: StatusFlags::default(),
-    head_diff: LineDiff::default(),
-    vs_trunk: AheadBehind::default(),
-    commit: String::new(),
-    age: String::new(),
-    message: String::new(),
-    ci_status: CiStatus::None,
-    summary: String::new(),
-  };
-
-  let out = format_list_table(&[bookmark], false, None, true);
-  let data_line = out.lines().nth(1).expect("should have data row");
-
-  assert!(
-    data_line.starts_with('/'),
-    "Bookmark row should use '/' gutter, got: {data_line}"
-  );
 }
 
 #[test]
@@ -1190,18 +1123,6 @@ fn dry_run_workspace_add() {
 }
 
 #[test]
-fn dry_run_bookmark_create() {
-  let actions = vec![Action::JjBookmarkCreate {
-    name: "feat".into(),
-    workspace: "feat".into(),
-  }];
-
-  let out = format_dry_run(&actions);
-
-  assert!(out.contains("would create bookmark 'feat'"), "got: {out}");
-}
-
-#[test]
 fn dry_run_workspace_forget_and_delete() {
   let actions = vec![
     Action::JjWorkspaceForget {
@@ -1209,9 +1130,6 @@ fn dry_run_workspace_forget_and_delete() {
     },
     Action::DeleteDir {
       path: PathBuf::from("/repo/.worktrees/feat"),
-    },
-    Action::JjBookmarkDelete {
-      name: "feat".into(),
     },
   ];
 
@@ -1222,7 +1140,6 @@ fn dry_run_workspace_forget_and_delete() {
     out.contains("would delete /repo/.worktrees/feat"),
     "got: {out}"
   );
-  assert!(out.contains("would delete bookmark 'feat'"), "got: {out}");
 }
 
 #[test]
@@ -1279,17 +1196,12 @@ fn dry_run_rename_workspace_and_dir() {
       from: PathBuf::from("/repo/.worktrees/old"),
       to: PathBuf::from("/repo/.worktrees/new"),
     },
-    Action::JjBookmarkRename {
-      old_name: "old".into(),
-      new_name: "new".into(),
-    },
   ];
 
   let out = format_dry_run(&actions);
 
   assert!(out.contains("would rename workspace 'old'"), "got: {out}");
   assert!(out.contains("would move"), "got: {out}");
-  assert!(out.contains("would rename bookmark 'old'"), "got: {out}");
 }
 
 #[test]
@@ -1365,11 +1277,11 @@ fn dry_run_json_skips_print_line() {
 #[test]
 fn dry_run_json_multiple_action_types() {
   let actions = vec![
-    Action::JjBookmarkCreate {
+    Action::JjSnapshot {
       name: "feat".into(),
-      workspace: "feat".into(),
+      path: PathBuf::from("/repo/.worktrees/feat"),
+      stale: false,
     },
-    Action::JjBookmarkDelete { name: "old".into() },
     Action::JjWorkspaceUpdateStale {
       name: "stale-ws".into(),
     },
@@ -1386,10 +1298,6 @@ fn dry_run_json_multiple_action_types() {
     Action::RenameDir {
       from: PathBuf::from("/a"),
       to: PathBuf::from("/b"),
-    },
-    Action::JjBookmarkRename {
-      old_name: "x".into(),
-      new_name: "y".into(),
     },
     Action::RunHook {
       name: "setup".into(),
@@ -1409,15 +1317,29 @@ fn dry_run_json_multiple_action_types() {
   let out = format_dry_run_json(&actions);
   let parsed: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid json");
 
-  assert_eq!(parsed.len(), 10);
-  assert_eq!(parsed[0]["type"], "bookmark_create");
-  assert_eq!(parsed[1]["type"], "bookmark_delete");
-  assert_eq!(parsed[2]["type"], "workspace_update_stale");
-  assert_eq!(parsed[3]["type"], "delete_dir");
-  assert_eq!(parsed[4]["type"], "delete_dir_background");
-  assert_eq!(parsed[5]["type"], "workspace_rename");
-  assert_eq!(parsed[6]["type"], "rename_dir");
-  assert_eq!(parsed[7]["type"], "bookmark_rename");
-  assert_eq!(parsed[8]["type"], "run_hook");
-  assert_eq!(parsed[9]["type"], "exec");
+  assert_eq!(parsed.len(), 8);
+  assert_eq!(parsed[0]["type"], "workspace_snapshot");
+  assert_eq!(parsed[1]["type"], "workspace_update_stale");
+  assert_eq!(parsed[2]["type"], "delete_dir");
+  assert_eq!(parsed[3]["type"], "delete_dir_background");
+  assert_eq!(parsed[4]["type"], "workspace_rename");
+  assert_eq!(parsed[5]["type"], "rename_dir");
+  assert_eq!(parsed[6]["type"], "run_hook");
+  assert_eq!(parsed[7]["type"], "exec");
+}
+
+#[test]
+fn dry_run_shows_snapshot() {
+  let actions = vec![Action::JjSnapshot {
+    name: "feat".into(),
+    path: PathBuf::from("/repo/.worktrees/feat"),
+    stale: false,
+  }];
+  let text = format_dry_run(&actions);
+  let parsed: Vec<serde_json::Value> =
+    serde_json::from_str(&format_dry_run_json(&actions)).expect("valid json");
+
+  assert_eq!(text.trim(), "would snapshot workspace 'feat'");
+  assert_eq!(parsed[0]["type"], "workspace_snapshot");
+  assert_eq!(parsed[0]["name"], "feat");
 }

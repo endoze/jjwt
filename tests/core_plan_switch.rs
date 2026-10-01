@@ -37,7 +37,6 @@ fn create_emits_pre_switch_then_workspace_then_pre_post_start_then_print_then_po
     .iter()
     .map(|a| match a {
       Action::JjWorkspaceAdd { .. } => "add",
-      Action::JjBookmarkCreate { .. } => "bookmark",
       Action::JjWorkspaceUpdateStale { .. } => "update-stale",
       Action::RunHook { env, .. } => env
         .iter()
@@ -60,7 +59,6 @@ fn create_emits_pre_switch_then_workspace_then_pre_post_start_then_print_then_po
     vec![
       "pre-switch",
       "add",
-      "bookmark",
       "update-stale",
       "pre-start",
       "post-start",
@@ -94,7 +92,7 @@ fn observed_clean() -> ObservedState {
 }
 
 #[test]
-fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
+fn create_emits_workspace_then_hooks_then_print() {
   let cfg = cfg_with_two_pre_start_groups();
   let args = SwitchArgs {
     name: "feat-x".into(),
@@ -123,13 +121,6 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
   );
   assert_eq!(
     plan.actions[1],
-    Action::JjBookmarkCreate {
-      name: "feat-x".into(),
-      workspace: "feat-x".into(),
-    }
-  );
-  assert_eq!(
-    plan.actions[2],
     Action::JjWorkspaceUpdateStale {
       name: "feat-x".into(),
     }
@@ -141,7 +132,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     cwd: cwd0,
     env: env0,
     ..
-  } = &plan.actions[3]
+  } = &plan.actions[2]
   else {
     panic!("expected RunHook");
   };
@@ -159,7 +150,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     name: n1,
     rendered_cmd: c1,
     ..
-  } = &plan.actions[4]
+  } = &plan.actions[3]
   else {
     panic!("expected RunHook");
   };
@@ -173,7 +164,7 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
     name: n2,
     rendered_cmd: c2,
     ..
-  } = &plan.actions[5]
+  } = &plan.actions[4]
   else {
     panic!("expected RunHook");
   };
@@ -181,10 +172,10 @@ fn create_emits_workspace_then_bookmark_then_hooks_then_print() {
   assert_eq!(c2, "make db-start");
 
   assert_eq!(
-    plan.actions[6],
+    plan.actions[5],
     Action::PrintLine(ws_path.display().to_string())
   );
-  assert_eq!(plan.actions.len(), 7);
+  assert_eq!(plan.actions.len(), 6);
 }
 
 #[test]
@@ -781,7 +772,7 @@ fn create_with_explicit_base_passes_revision() {
 }
 
 #[test]
-fn create_without_base_defaults_to_trunk_bookmark() {
+fn create_without_base_defaults_to_trunk_commit() {
   let cfg = MergedConfig::default();
   let args = SwitchArgs {
     name: "feat-x".into(),
@@ -791,7 +782,10 @@ fn create_without_base_defaults_to_trunk_bookmark() {
   let obs = ObservedState {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
-    trunk_bookmark: Some("main".into()),
+    trunk: Some(Trunk {
+      name: "main".into(),
+      commit_id: "abc123".into(),
+    }),
     ..Default::default()
   };
 
@@ -802,7 +796,7 @@ fn create_without_base_defaults_to_trunk_bookmark() {
     _ => None,
   });
 
-  assert_eq!(revision, Some(Some("main".into())));
+  assert_eq!(revision, Some(Some("abc123".into())));
 }
 
 #[test]
@@ -816,7 +810,7 @@ fn create_without_base_and_no_trunk_passes_none() {
   let obs = ObservedState {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
-    trunk_bookmark: None,
+    trunk: None,
     ..Default::default()
   };
 
@@ -842,7 +836,10 @@ fn create_with_existing_bookmark_uses_bookmark_as_base() {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
     target_bookmark_exists: true,
-    trunk_bookmark: Some("main".into()),
+    trunk: Some(Trunk {
+      name: "main".into(),
+      commit_id: "abc123".into(),
+    }),
     ..Default::default()
   };
 
@@ -861,32 +858,6 @@ fn create_with_existing_bookmark_uses_bookmark_as_base() {
 }
 
 #[test]
-fn create_with_existing_bookmark_skips_bookmark_create() {
-  let cfg = MergedConfig::default();
-  let args = SwitchArgs {
-    name: "feat-x".into(),
-    create: true,
-    ..Default::default()
-  };
-  let obs = ObservedState {
-    repo_root: PathBuf::from("/repo"),
-    is_jj_repo: true,
-    target_bookmark_exists: true,
-    ..Default::default()
-  };
-
-  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
-
-  assert!(
-    !plan
-      .actions
-      .iter()
-      .any(|a| matches!(a, Action::JjBookmarkCreate { .. })),
-    "should not create bookmark when it already exists"
-  );
-}
-
-#[test]
 fn create_with_explicit_base_overrides_existing_bookmark() {
   let cfg = MergedConfig::default();
   let args = SwitchArgs {
@@ -899,7 +870,10 @@ fn create_with_explicit_base_overrides_existing_bookmark() {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
     target_bookmark_exists: true,
-    trunk_bookmark: Some("main".into()),
+    trunk: Some(Trunk {
+      name: "main".into(),
+      commit_id: "abc123".into(),
+    }),
     ..Default::default()
   };
 
@@ -1059,5 +1033,28 @@ fn create_with_explicit_base_never_edits_in_place() {
     edit_in_place,
     Some(false),
     "an explicit --base should branch off the base, not edit the bookmark in place"
+  );
+}
+
+#[test]
+fn create_does_not_create_a_bookmark() {
+  let cfg = MergedConfig::from_project(Config::default());
+  let args = SwitchArgs {
+    name: "feat".into(),
+    create: true,
+    ..Default::default()
+  };
+  let obs = ObservedState {
+    repo_root: PathBuf::from("/repo"),
+    is_jj_repo: true,
+    ..Default::default()
+  };
+  let plan = plan_switch(&cfg, &args, &obs).expect("plan ok");
+
+  assert!(
+    plan
+      .actions
+      .iter()
+      .all(|a| !format!("{a:?}").contains("Bookmark"))
   );
 }

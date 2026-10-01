@@ -17,7 +17,15 @@ pub fn run(cwd: &Path) -> Result<()> {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".into());
 
-      println!("[ok]   jj found: {} ({version})", path.display());
+      let (min_major, min_minor) = crate::core::types::MIN_JJ_VERSION;
+
+      match crate::core::types::parse_jj_version(&version) {
+        Some(v) if v < crate::core::types::MIN_JJ_VERSION => println!(
+          "[err]  jj found: {} ({version}), but jjwt needs jj {min_major}.{min_minor} or newer",
+          path.display()
+        ),
+        _ => println!("[ok]   jj found: {} ({version})", path.display()),
+      }
     }
     Err(_) => {
       println!("[err]  jj not found on PATH (required)");

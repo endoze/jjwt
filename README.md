@@ -4,6 +4,8 @@ A workspace manager for [jujutsu](https://martinvonz.github.io/jj/) repositories
 
 ## Install
 
+jjwt needs the [jj](https://martinvonz.github.io/jj/) CLI 0.39 or newer on your `PATH`. `jjwt doctor` checks this.
+
 ### Cargo
 
 ```sh
@@ -88,7 +90,7 @@ cd my-jj-repo
 # Create a config file
 jjwt config create --project
 
-# Create a new workspace (no existing bookmark)
+# Create a new workspace
 jjwt switch --create feat/my-feature
 
 # Switch to a workspace for an existing bookmark (auto-creates)
@@ -108,12 +110,12 @@ jjwt remove
 
 ### `switch <name>`
 
-Switch to a workspace. If the workspace doesn't exist but a bookmark with that name does, the workspace is created automatically. Use `--create` only for entirely new branches.
+Switch to a workspace. If the workspace doesn't exist but a bookmark with that name does, the workspace is created on that bookmark automatically. Use `--create` for a new workspace with no bookmark; jjwt never creates bookmarks, so add one with `jj bookmark` when you want to push.
 
 ```sh
 jjwt switch feat/login          # switch or auto-create from bookmark
-jjwt switch --create new-idea   # create workspace + new bookmark
-jjwt switch ^                   # switch to trunk
+jjwt switch --create new-idea   # create workspace
+jjwt switch ^                   # switch to the default workspace
 jjwt switch -                   # switch to previous workspace
 jjwt switch @                   # current workspace (useful with -x)
 jjwt switch pr:42               # checkout a GitHub PR by number
@@ -122,8 +124,8 @@ jjwt switch mr:12               # checkout a GitLab MR by number
 
 | Flag | Description |
 |------|-------------|
-| `-c, --create` | Create workspace and bookmark from scratch |
-| `-b, --base <rev>` | Base revision for the new workspace (requires `--create`; defaults to trunk) |
+| `-c, --create` | Create workspace |
+| `-b, --base <rev>` | Base revision for the new workspace: a local bookmark, full commit id, or `^` for `trunk()` (requires `--create`; defaults to `trunk()`) |
 | `-x, --execute <cmd>` | Run a template-rendered command after switching |
 | `--clobber` | Remove stale directory at target path |
 | `--rerun-hooks` | Re-run start hooks even when workspace exists |
@@ -133,13 +135,10 @@ jjwt switch mr:12               # checkout a GitLab MR by number
 
 ### `remove [names...]`
 
-Remove one or more workspaces. Omit names to remove the current workspace.
+Remove one or more workspaces. Omit names to remove the current workspace. Changes to tracked files are snapshotted into its working-copy commit before it is forgotten, so they stay in the repo; ignored and untracked files are deleted with the directory. Bookmarks are left alone. The default workspace cannot be removed.
 
 | Flag | Description |
 |------|-------------|
-| `-f, --force` | Bypass uncommitted changes check |
-| `-D, --force-delete` | Delete bookmark even if not merged into trunk |
-| `--no-delete-branch` | Keep bookmark even when merged |
 | `--no-hooks` | Skip all hooks |
 | `--dry-run` | Show what would be done without doing it |
 | `--format json` | Output as JSON |
@@ -150,8 +149,6 @@ Show all workspaces with status, diff stats, and trunk relationship.
 
 ```sh
 jjwt list                       # table view
-jjwt list --bookmarks           # include bookmarks without workspaces
-jjwt list --remotes             # include remote-only bookmarks
 jjwt list --full                # add CI status + LLM summaries
 jjwt list --format json         # machine-readable output
 jjwt list --format statusline   # compact one-liner for shell prompts
@@ -201,8 +198,7 @@ Low-level tools for scripting and automation.
 | `step eval <template>` | Render a template expression |
 | `step for-each -- <cmd>` | Run command in every workspace |
 | `step tether -- <cmd>` | Run command tied to current workspace lifecycle |
-| `step prune [--dry-run]` | Remove all workspaces merged into trunk |
-| `step relocate <old> <new> [--rename-bookmark]` | Rename workspace and move its directory |
+| `step relocate <old> <new>` | Rename workspace and move its directory |
 | `step describe [--dry-run]` | Generate a commit message with an LLM |
 | `step pick` | Interactive workspace picker with preview |
 | `step copy-ignored <src> [dest]` | Copy jj-ignored files between workspaces (CoW) |
@@ -218,7 +214,7 @@ greet = "echo Hello from {{ branch }} ({{ args | join(' ') }})"
 ```
 
 ```sh
-jjwt greet world    # => Hello from main (world)
+jjwt greet world    # => Hello from default (world)
 ```
 
 ## Configuration

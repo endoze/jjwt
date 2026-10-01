@@ -29,13 +29,15 @@ pub fn run(
   let mut obs = observe_list(&jj, &fs, cwd, opts)?;
 
   if opts.full {
-    let bookmarks: Vec<String> = obs.rows.iter().map(|r| r.workspace.name.clone()).collect();
-    let ci_map = crate::shell::ci::query_ci_statuses(&obs.repo_root, &bookmarks);
+    let names: Vec<String> = obs
+      .rows
+      .iter()
+      .flat_map(|r| r.bookmarks.iter().map(|b| b.name.clone()))
+      .collect();
+    let ci_map = crate::shell::ci::query_ci_statuses(&obs.repo_root, &names);
 
     for row in &mut obs.rows {
-      if let Some(&status) = ci_map.get(&row.workspace.name) {
-        row.ci_status = status;
-      }
+      row.ci_status = crate::core::plan::ci_status_for(&row.bookmarks, &ci_map);
     }
 
     let summary_enabled = cfg.list.as_ref().and_then(|l| l.summary).unwrap_or(false);

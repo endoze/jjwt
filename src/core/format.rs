@@ -1,6 +1,4 @@
-use crate::core::types::{
-  Action, AheadBehind, CiStatus, LineDiff, ListRow, ListRowKind, StatusFlags, TrunkRel,
-};
+use crate::core::types::{Action, AheadBehind, CiStatus, LineDiff, ListRow, StatusFlags, TrunkRel};
 use anstyle::{AnsiColor, Color, Style};
 use serde_json::{Map, Value, json};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -542,11 +540,9 @@ fn compute_widths(
   (widths, visible)
 }
 
-/// Return the gutter marker character for a row (`@`, `^`, `+`, or `/`).
+/// Return the gutter marker character for a row (`@`, `^`, or `+`).
 fn gutter_char(row: &ListRow) -> char {
-  if matches!(row.kind, ListRowKind::Bookmark) {
-    '/'
-  } else if row.is_current {
+  if row.is_current {
     '@'
   } else if row.is_default {
     '^'
@@ -557,10 +553,7 @@ fn gutter_char(row: &ListRow) -> char {
 
 /// Format the workspace path column relative to the repo root.
 fn format_path(row: &ListRow) -> String {
-  match row.kind {
-    ListRowKind::Bookmark => String::new(),
-    ListRowKind::Workspace => row.display_path.clone(),
-  }
+  row.display_path.clone()
 }
 
 /// Render the 7-position status column. Empty positions are filled with
@@ -898,16 +891,6 @@ fn list_row_json(r: &ListRow) -> Value {
   let mut m = Map::new();
 
   m.insert("name".into(), Value::String(r.name.clone()));
-  m.insert(
-    "kind".into(),
-    Value::String(
-      match r.kind {
-        ListRowKind::Workspace => "workspace",
-        ListRowKind::Bookmark => "bookmark",
-      }
-      .into(),
-    ),
-  );
   m.insert("path".into(), Value::String(r.path.display().to_string()));
   m.insert(
     "url".into(),
@@ -979,13 +962,11 @@ pub fn format_switch_json(name: &str, path: &std::path::Path, created: bool) -> 
   .expect("json serialize")
 }
 
-/// JSON envelope for `jjwt remove`. Fields: `name`, `path`,
-/// `bookmark_deleted` (true when the bookmark was merged and removed).
-pub fn format_remove_json(name: &str, path: &std::path::Path, bookmark_deleted: bool) -> String {
+/// JSON envelope for `jjwt remove`. Fields: `name`, `path`.
+pub fn format_remove_json(name: &str, path: &std::path::Path) -> String {
   serde_json::to_string(&json!({
     "name": name,
     "path": path.display().to_string(),
-    "bookmark_deleted": bookmark_deleted,
   }))
   .expect("json serialize")
 }
@@ -1029,21 +1010,14 @@ enum DryRunEntry<'a> {
     /// Filesystem path where the workspace will be created.
     path: &'a std::path::Path,
   },
-  /// Create a new jj bookmark pointing at a workspace's working copy.
-  BookmarkCreate {
-    /// Bookmark name.
+  /// Snapshot a workspace before it is forgotten.
+  WorkspaceSnapshot {
+    /// Workspace name to snapshot.
     name: &'a str,
-    /// Workspace whose working copy the bookmark will point at.
-    workspace: &'a str,
   },
   /// Forget an existing jj workspace (does not delete files on disk).
   WorkspaceForget {
     /// Workspace name to forget.
-    name: &'a str,
-  },
-  /// Delete a jj bookmark.
-  BookmarkDelete {
-    /// Bookmark name to delete.
     name: &'a str,
   },
   /// Refresh the working-copy commit for a stale workspace.
@@ -1075,13 +1049,6 @@ enum DryRunEntry<'a> {
     /// Destination path.
     to: &'a std::path::Path,
   },
-  /// Rename a jj bookmark.
-  BookmarkRename {
-    /// Current bookmark name.
-    old_name: &'a str,
-    /// New bookmark name.
-    new_name: &'a str,
-  },
   /// Run a configured hook command.
   RunHook {
     /// Hook name (e.g. `pre-switch.setup`).
@@ -1101,15 +1068,13 @@ impl DryRunEntry<'_> {
   fn as_type_str(&self) -> &'static str {
     match self {
       Self::WorkspaceAdd { .. } => "workspace_add",
-      Self::BookmarkCreate { .. } => "bookmark_create",
+      Self::WorkspaceSnapshot { .. } => "workspace_snapshot",
       Self::WorkspaceForget { .. } => "workspace_forget",
-      Self::BookmarkDelete { .. } => "bookmark_delete",
       Self::WorkspaceUpdateStale { .. } => "workspace_update_stale",
       Self::DeleteDir { .. } => "delete_dir",
       Self::DeleteDirBackground { .. } => "delete_dir_background",
       Self::WorkspaceRename { .. } => "workspace_rename",
       Self::RenameDir { .. } => "rename_dir",
-      Self::BookmarkRename { .. } => "bookmark_rename",
       Self::RunHook { .. } => "run_hook",
       Self::Exec { .. } => "exec",
     }
@@ -1122,11 +1087,8 @@ impl DryRunEntry<'_> {
 fn dry_run_entry(action: &Action) -> Option<DryRunEntry<'_>> {
   match action {
     Action::JjWorkspaceAdd { name, path, .. } => Some(DryRunEntry::WorkspaceAdd { name, path }),
-    Action::JjBookmarkCreate { name, workspace } => {
-      Some(DryRunEntry::BookmarkCreate { name, workspace })
-    }
+    Action::JjSnapshot { name, .. } => Some(DryRunEntry::WorkspaceSnapshot { name }),
     Action::JjWorkspaceForget { name } => Some(DryRunEntry::WorkspaceForget { name }),
-    Action::JjBookmarkDelete { name } => Some(DryRunEntry::BookmarkDelete { name }),
     Action::JjWorkspaceUpdateStale { name } => Some(DryRunEntry::WorkspaceUpdateStale { name }),
     Action::DeleteDir { path } => Some(DryRunEntry::DeleteDir { path }),
     Action::DeleteDirBackground { path } => Some(DryRunEntry::DeleteDirBackground { path }),
@@ -1134,9 +1096,6 @@ fn dry_run_entry(action: &Action) -> Option<DryRunEntry<'_>> {
       Some(DryRunEntry::WorkspaceRename { old_name, new_name })
     }
     Action::RenameDir { from, to } => Some(DryRunEntry::RenameDir { from, to }),
-    Action::JjBookmarkRename { old_name, new_name } => {
-      Some(DryRunEntry::BookmarkRename { old_name, new_name })
-    }
     Action::RunHook {
       name, rendered_cmd, ..
     } => Some(DryRunEntry::RunHook { name, rendered_cmd }),
@@ -1152,9 +1111,8 @@ fn format_dry_run_line(e: &DryRunEntry<'_>) -> String {
     DryRunEntry::WorkspaceAdd { name, path } => {
       format!("would create workspace '{name}' at {}", path.display())
     }
-    DryRunEntry::BookmarkCreate { name, .. } => format!("would create bookmark '{name}'"),
+    DryRunEntry::WorkspaceSnapshot { name } => format!("would snapshot workspace '{name}'"),
     DryRunEntry::WorkspaceForget { name } => format!("would forget workspace '{name}'"),
-    DryRunEntry::BookmarkDelete { name } => format!("would delete bookmark '{name}'"),
     DryRunEntry::WorkspaceUpdateStale { name } => {
       format!("would update stale workspace '{name}'")
     }
@@ -1167,9 +1125,6 @@ fn format_dry_run_line(e: &DryRunEntry<'_>) -> String {
     }
     DryRunEntry::RenameDir { from, to } => {
       format!("would move {} \u{2192} {}", from.display(), to.display())
-    }
-    DryRunEntry::BookmarkRename { old_name, new_name } => {
-      format!("would rename bookmark '{old_name}' \u{2192} '{new_name}'")
     }
     DryRunEntry::RunHook { name, rendered_cmd } => {
       format!("would run hook '{name}': {rendered_cmd}")
@@ -1189,20 +1144,15 @@ fn format_dry_run_value(e: &DryRunEntry<'_>) -> Value {
       m.insert("name".into(), Value::from(*name));
       m.insert("path".into(), Value::from(path.display().to_string()));
     }
-    DryRunEntry::BookmarkCreate { name, workspace } => {
-      m.insert("name".into(), Value::from(*name));
-      m.insert("workspace".into(), Value::from(*workspace));
-    }
-    DryRunEntry::WorkspaceForget { name }
-    | DryRunEntry::BookmarkDelete { name }
+    DryRunEntry::WorkspaceSnapshot { name }
+    | DryRunEntry::WorkspaceForget { name }
     | DryRunEntry::WorkspaceUpdateStale { name } => {
       m.insert("name".into(), Value::from(*name));
     }
     DryRunEntry::DeleteDir { path } | DryRunEntry::DeleteDirBackground { path } => {
       m.insert("path".into(), Value::from(path.display().to_string()));
     }
-    DryRunEntry::WorkspaceRename { old_name, new_name }
-    | DryRunEntry::BookmarkRename { old_name, new_name } => {
+    DryRunEntry::WorkspaceRename { old_name, new_name } => {
       m.insert("old_name".into(), Value::from(*old_name));
       m.insert("new_name".into(), Value::from(*new_name));
     }

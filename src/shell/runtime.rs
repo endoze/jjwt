@@ -74,14 +74,11 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         rt.jj
           .workspace_add(&rt.repo_root, name, path, revision.as_deref(), *edit_in_place)?;
       }
-      Action::JjBookmarkCreate { name, workspace } => {
-        rt.jj.bookmark_create(&rt.repo_root, name, workspace)?;
+      Action::JjSnapshot { path, stale, .. } => {
+        rt.jj.workspace_snapshot(path, *stale)?;
       }
       Action::JjWorkspaceForget { name } => {
         rt.jj.workspace_forget(&rt.repo_root, name)?;
-      }
-      Action::JjBookmarkDelete { name } => {
-        rt.jj.bookmark_delete(&rt.repo_root, name)?;
       }
       Action::JjWorkspaceUpdateStale { name } => {
         rt.jj.workspace_update_stale(&rt.repo_root, name)?;
@@ -95,9 +92,6 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
       Action::RenameDir { from, to } => {
         rt.fs.rename(from, to)?;
       }
-      Action::JjBookmarkRename { old_name, new_name } => {
-        rt.jj.bookmark_rename(&rt.repo_root, old_name, new_name)?;
-      }
       Action::DeleteDirBackground { path } => {
         let ts = std::time::SystemTime::now()
           .duration_since(std::time::UNIX_EPOCH)
@@ -107,9 +101,15 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         let trash_path = trash_dir.join(ts.to_string());
 
         rt.fs.create_dir_all(&trash_dir)?;
-        rt.fs.rename(path, &trash_path)?;
-        rt.proc
-          .spawn_detached("rm", &["-rf", &trash_path.display().to_string()])?;
+
+        match rt.fs.rename(path, &trash_path) {
+          Ok(()) => {
+            rt.proc
+              .spawn_detached("rm", &["-rf", &trash_path.display().to_string()])?;
+          }
+          Err(_) if !rt.fs.exists(path) => {}
+          Err(e) => return Err(e),
+        }
       }
       Action::RunHook {
         name,
