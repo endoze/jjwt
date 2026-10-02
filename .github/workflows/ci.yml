@@ -18,7 +18,7 @@ jobs:
     name: Tests and Coverage
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin:0.35.4-nightly@sha256:29651aae15140adc538a7d5a5cb5020240caf14e15a191a4f16c6902ccc021f8
+      image: xd009642/tarpaulin:0.37.4-nightly@sha256:9fd5173a5a97281378609804e6c0a66c2acf2998290025929d76c58754166d71
       options: --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
