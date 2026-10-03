@@ -2006,6 +2006,7 @@ dependencies = [
  "libc",
  "minijinja",
  "petname",
+ "petname-macros",
  "pollster",
  "sanitize-filename",
  "serde",
