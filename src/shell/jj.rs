@@ -14,7 +14,8 @@ pub trait Jj {
   /// `jj workspace add --name <name> <path>`, optionally checking out a
   /// specific revision instead of the root changeset. When `edit_in_place`
   /// is true, the new workspace's `@` is set directly onto `revision`
-  /// (jj edit) rather than a new empty child commit on top (jj new).
+  /// (jj edit) rather than a new empty child commit on top (jj new), unless
+  /// `revision` is immutable or `root()`, which always get a new child.
   fn workspace_add(
     &self,
     repo_root: &Path,

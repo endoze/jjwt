@@ -10,6 +10,7 @@ use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::matchers::EverythingMatcher;
+use jj_lib::object_id::ObjectId as _;
 use jj_lib::ref_name::{RefName, WorkspaceName, WorkspaceNameBuf};
 use jj_lib::repo::{ReadonlyRepo, Repo as _, StoreFactories};
 use jj_lib::settings::UserSettings;
@@ -243,7 +244,7 @@ impl Jj for JjLib {
       let mut tx = repo.start_transaction();
       let ws_name = WorkspaceNameBuf::from(name);
 
-      if edit_in_place {
+      if edit_in_place && is_mutable(&self.repo_root, commit.id()) {
         pollster::block_on(tx.repo_mut().edit(ws_name, &commit))
           .context("failed to edit revision")?;
       } else {
@@ -706,6 +707,27 @@ fn run_jj(dir: &Path, args: &[&str]) -> Result<()> {
   }
 
   Ok(())
+}
+
+/// True if `commit_id` is in `mutable()`, evaluated through the jj CLI so the
+/// user's `immutable_heads()` applies. `root()` is never mutable. Returns
+/// false when jj can't answer, so callers fall back to a new child commit.
+fn is_mutable(repo_root: &Path, commit_id: &CommitId) -> bool {
+  let Ok(jj) = which::which("jj") else {
+    return false;
+  };
+  let revset = format!("{} & mutable()", commit_id.hex());
+  let Ok(out) = std::process::Command::new(jj)
+    .arg("-R")
+    .arg(repo_root)
+    .args(["--ignore-working-copy", "--color", "never", "log", "--no-graph"])
+    .args(["-r", &revset, "-T", "commit_id"])
+    .output()
+  else {
+    return false;
+  };
+
+  out.status.success() && !out.stdout.is_empty()
 }
 
 /// Trigger a working-copy snapshot via `jj util snapshot` so the repo

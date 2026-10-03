@@ -938,3 +938,115 @@ fn switch_create_with_unknown_base_leaves_no_workspace() {
 
   assert_eq!(String::from_utf8_lossy(&ws.stdout).trim(), "default");
 }
+
+/// Run `jj <args>` in `dir` with jj's user config rooted at `home` (where
+/// `jj config set --repo` writes), panicking on failure.
+fn jj_in(dir: &Path, home: &Path, args: &[&str]) {
+  let out = jj()
+    .current_dir(dir)
+    .env("HOME", home)
+    .env("XDG_CONFIG_HOME", home)
+    .args(args)
+    .output()
+    .unwrap();
+
+  assert!(
+    out.status.success(),
+    "`jj {}` failed: {}",
+    args.join(" "),
+    String::from_utf8_lossy(&out.stderr)
+  );
+}
+
+/// Init a repo, run each `setup` jj command in it, then
+/// `jjwt switch <name> --create` onto the existing bookmark `name`.
+/// Asserts the switch succeeded and returns the repo dir.
+fn switch_create_onto_existing_bookmark(setup: &[&[&str]], name: &str) -> TempDir {
+  let tmp = TempDir::new().unwrap();
+  let repo = tmp.path();
+  let fake_home = TempDir::new().unwrap();
+
+  jj_in(repo, fake_home.path(), &["git", "init"]);
+
+  std::fs::create_dir_all(repo.join(".config")).unwrap();
+  std::fs::write(
+    repo.join(".config/wt.toml"),
+    "worktree-path = \".worktrees/{{ branch | sanitize }}\"\n",
+  )
+  .unwrap();
+
+  for args in setup {
+    jj_in(repo, fake_home.path(), args);
+  }
+
+  let out = jjwt_cmd(fake_home.path())
+    .arg("-C")
+    .arg(repo)
+    .args(["switch", name, "--create"])
+    .output()
+    .unwrap();
+
+  assert!(
+    out.status.success(),
+    "jjwt failed:\nstdout: {}\nstderr: {}",
+    String::from_utf8_lossy(&out.stdout),
+    String::from_utf8_lossy(&out.stderr)
+  );
+
+  tmp
+}
+
+/// True if workspace `name`'s `@` is a new change on top of bookmark `name`.
+fn workspace_stacked_on_bookmark(repo: &Path, name: &str) -> bool {
+  let out = jj()
+    .current_dir(repo)
+    .args(["log", "--no-graph", "-T", r#""x""#, "-r"])
+    .arg(format!("{name}@- & {name}"))
+    .output()
+    .unwrap();
+
+  out.status.success() && !out.stdout.is_empty()
+}
+
+#[test]
+fn switch_create_on_bookmark_at_root_stacks_a_new_change() {
+  if which::which("jj").is_err() {
+    eprintln!("skipping e2e: jj not on PATH");
+
+    return;
+  }
+
+  let tmp = switch_create_onto_existing_bookmark(
+    &[&["bookmark", "create", "rooted", "-r", "root()"]],
+    "rooted",
+  );
+
+  assert!(workspace_stacked_on_bookmark(tmp.path(), "rooted"));
+}
+
+#[test]
+fn switch_create_on_immutable_empty_bookmark_stacks_a_new_change() {
+  if which::which("jj").is_err() {
+    eprintln!("skipping e2e: jj not on PATH");
+
+    return;
+  }
+
+  let tmp = switch_create_onto_existing_bookmark(
+    &[
+      &["new", "-m", "frozen"],
+      &["bookmark", "create", "frozen", "-r", "@"],
+      &["new"],
+      &[
+        "config",
+        "set",
+        "--repo",
+        r#"revset-aliases."immutable_heads()""#,
+        "frozen",
+      ],
+    ],
+    "frozen",
+  );
+
+  assert!(workspace_stacked_on_bookmark(tmp.path(), "frozen"));
+}
