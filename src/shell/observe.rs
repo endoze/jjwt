@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::core::types::{
-  CiStatus, ListOptions, ObservedListRow, ObservedListState, ObservedState, Workspace,
+  CiStatus, ObservedListRow, ObservedListState, ObservedState, Workspace, WorkspaceBookmark,
   WorkspaceDetails,
 };
 use crate::shell::fs::Fs;
@@ -27,11 +27,11 @@ pub fn observe<J: Jj, F: Fs>(
         workspaces: vec![],
         current_workspace: None,
         target_path_exists: false,
-        target_workspace_dirty: false,
-        target_bookmark_merged: false,
         target_bookmark_exists: false,
+        target_bookmark_empty: false,
+        target_bookmark_occupied: false,
         target_resolved_workspace: None,
-        trunk_bookmark: None,
+        trunk: None,
       });
     }
   };
@@ -41,9 +41,9 @@ pub fn observe<J: Jj, F: Fs>(
   let current_workspace = pick_current_workspace(&cwd_canon, &workspaces);
 
   let mut target_path_exists = false;
-  let mut target_workspace_dirty = false;
-  let mut target_bookmark_merged = false;
   let mut target_bookmark_exists = false;
+  let mut target_bookmark_empty = false;
+  let mut target_bookmark_occupied = false;
   let mut target_resolved_workspace = None;
 
   if let Some(name) = target_name {
@@ -63,10 +63,9 @@ pub fn observe<J: Jj, F: Fs>(
 
     target_path_exists = fs.exists(&target_path);
 
-    if workspaces.iter().any(|w| w.name == name) {
-      target_workspace_dirty = jj.workspace_is_dirty(&repo_root, name)?;
-    } else if let Ok(Some(trunk)) = jj.trunk_bookmark(&repo_root)
-      && trunk == name
+    if !workspaces.iter().any(|w| w.name == name)
+      && let Ok(Some(trunk)) = jj.trunk(&repo_root)
+      && trunk.name == name
       && workspaces.iter().any(|w| w.name == "default")
     {
       target_resolved_workspace = Some("default".to_string());
@@ -74,11 +73,14 @@ pub fn observe<J: Jj, F: Fs>(
 
     target_bookmark_exists = jj.bookmark_exists(&repo_root, name)?;
     if target_bookmark_exists {
-      target_bookmark_merged = jj.bookmark_is_merged_into_trunk(&repo_root, name)?;
+      let (empty, occupied) = jj.bookmark_commit_state(&repo_root, name)?;
+
+      target_bookmark_empty = empty;
+      target_bookmark_occupied = occupied;
     }
   }
 
-  let trunk_bookmark = jj.trunk_bookmark(&repo_root).unwrap_or(None);
+  let trunk = jj.trunk(&repo_root).unwrap_or(None);
 
   Ok(ObservedState {
     repo_root,
@@ -86,23 +88,16 @@ pub fn observe<J: Jj, F: Fs>(
     workspaces,
     current_workspace,
     target_path_exists,
-    target_workspace_dirty,
-    target_bookmark_merged,
     target_bookmark_exists,
+    target_bookmark_empty,
+    target_bookmark_occupied,
     target_resolved_workspace,
-    trunk_bookmark,
+    trunk,
   })
 }
 
 /// Gather everything needed for `jjwt list`. One pass; sequential per-workspace
 /// `jj` calls. For typical workspace counts (N ≤ ~10) the latency is fine.
-///
-/// `opts.include_bookmarks` triggers a `jj bookmark list` to collect names
-/// of local bookmarks that don't have a corresponding workspace.
-/// `opts.include_remotes` collects remote-only bookmarks (local doesn't
-/// exist; we already know `bookmarks_with_remote()` returns the local
-/// names that do have a remote variant — the *remote-only* set is the
-/// difference of `--all-remotes` ∖ `local`).
 pub fn observe_list<J: Jj + Sync, F: Fs>(
   jj: &J,
   _fs: &F,
@@ -127,7 +122,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
   let ws_names: Vec<String> = workspaces.iter().map(|w| w.name.clone()).collect();
 
   // Run three independent batch queries in parallel:
-  // 1. bookmark_sets (one jj call)
+  // 1. workspace_bookmarks_batch (bookmarks in trunk()..@ per workspace)
   // 2. workspace_commit_info_batch (one jj call — commit metadata + diff stats + conflicts)
   // 3. workspace_ahead_behind_batch (two jj calls — ahead + behind)
   // Plus per-workspace status queries (one jj call each, for modified/untracked).
@@ -136,7 +131,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
       let repo = &repo_root;
       let names = &ws_names;
 
-      let bm_handle = s.spawn(move || jj.bookmark_sets(repo));
+      let bm_handle = s.spawn(move || jj.workspace_bookmarks_batch(repo, names));
       let ci_handle = s.spawn(move || jj.workspace_commit_info_batch(repo, names));
       let ab_handle = s.spawn(move || jj.workspace_ahead_behind_batch(repo, names));
 
@@ -161,7 +156,7 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
       )
     });
 
-  let (all_local, remote_set) = bookmark_result.unwrap_or_default();
+  let bookmarks = bookmark_result.unwrap_or_default();
   let commit_infos = commit_result?;
   let ahead_behinds = ahead_behind_result?;
 
@@ -170,19 +165,14 @@ pub fn observe_list<J: Jj + Sync, F: Fs>(
     &commit_infos,
     &ahead_behinds,
     &status_results,
-    &remote_set,
+    &bookmarks,
   );
-
-  let (extra_bookmark_names, extra_remote_only_names) =
-    collect_extra_bookmarks(&opts, &all_local, &remote_set, &workspaces);
 
   Ok(ObservedListState {
     repo_root,
     is_jj_repo: true,
     current_workspace,
     rows,
-    extra_bookmark_names,
-    extra_remote_only_names,
     full: opts.full,
   })
 }
@@ -193,7 +183,7 @@ fn build_list_rows(
   commit_infos: &std::collections::HashMap<String, crate::core::types::CommitInfo>,
   ahead_behinds: &std::collections::HashMap<String, (u32, u32)>,
   status_results: &[(String, Result<(bool, bool)>)],
-  remote_set: &std::collections::HashSet<String>,
+  bookmarks: &std::collections::HashMap<String, Vec<WorkspaceBookmark>>,
 ) -> Vec<ObservedListRow> {
   let mut rows = Vec::with_capacity(workspaces.len());
 
@@ -204,7 +194,6 @@ fn build_list_rows(
       Ok(s) => *s,
       Err(_) => (false, false),
     };
-    let has_remote_bookmark = remote_set.contains(&w.name);
 
     rows.push(ObservedListRow {
       workspace: w.clone(),
@@ -220,110 +209,13 @@ fn build_list_rows(
       },
       ahead,
       behind,
-      has_remote_bookmark,
+      bookmarks: bookmarks.get(&w.name).cloned().unwrap_or_default(),
       ci_status: CiStatus::None,
       summary: String::new(),
     });
   }
 
   rows
-}
-
-/// Collect extra bookmark and remote-only names that don't correspond to any
-/// workspace. Returns `(extra_bookmark_names, extra_remote_only_names)`.
-fn collect_extra_bookmarks(
-  opts: &ListOptions,
-  all_local: &[String],
-  remote_set: &std::collections::HashSet<String>,
-  workspaces: &[Workspace],
-) -> (Vec<String>, Vec<String>) {
-  let ws_name_set: std::collections::HashSet<&str> =
-    workspaces.iter().map(|w| w.name.as_str()).collect();
-
-  let extra_bookmark_names = if opts.include_bookmarks {
-    all_local
-      .iter()
-      .filter(|n| !ws_name_set.contains(n.as_str()))
-      .cloned()
-      .collect()
-  } else {
-    Vec::new()
-  };
-
-  let extra_remote_only_names = if opts.include_remotes {
-    let local_set: std::collections::HashSet<&str> = all_local.iter().map(|s| s.as_str()).collect();
-
-    remote_set
-      .iter()
-      .filter(|n| !local_set.contains(n.as_str()))
-      .cloned()
-      .collect()
-  } else {
-    Vec::new()
-  };
-
-  (extra_bookmark_names, extra_remote_only_names)
-}
-
-/// Gather workspace states needed for the `prune` command.
-pub fn observe_prune<J: Jj + Sync, F: Fs>(
-  jj: &J,
-  _fs: &F,
-  start_dir: &Path,
-) -> Result<crate::core::types::ObservedPruneState> {
-  use crate::core::types::ObservedPruneState;
-
-  let repo_root = match jj.repo_root(start_dir) {
-    Ok(r) => r,
-    Err(_) => {
-      return Ok(ObservedPruneState {
-        repo_root: start_dir.to_path_buf(),
-        is_jj_repo: false,
-        ..Default::default()
-      });
-    }
-  };
-
-  let workspaces = jj.workspace_list(&repo_root)?;
-  let cwd_canon = std::fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
-  let current_workspace = pick_current_workspace(&cwd_canon, &workspaces);
-
-  // Per-workspace prune queries in parallel (mirrors observe_list pattern).
-  let workspace_status = std::thread::scope(|s| {
-    let repo = &repo_root;
-
-    let handles: Vec<_> = workspaces
-      .iter()
-      .map(|w| {
-        s.spawn(move || {
-          let bm_exists = jj.bookmark_exists(repo, &w.name)?;
-
-          let bm_merged = if bm_exists {
-            jj.bookmark_is_merged_into_trunk(repo, &w.name)?
-          } else {
-            false
-          };
-
-          let dirty = jj.workspace_is_dirty(repo, &w.name)?;
-
-          Ok::<_, anyhow::Error>((w.name.clone(), bm_exists, bm_merged, dirty))
-        })
-      })
-      .collect();
-
-    handles
-      .into_iter()
-      .map(|h| h.join().expect("prune query thread panicked"))
-      .collect::<Result<Vec<_>>>()
-  })?;
-
-  Ok(ObservedPruneState {
-    repo_root,
-    is_jj_repo: true,
-    current_workspace,
-    workspaces,
-    workspace_status,
-  })
 }
 
 /// Pick the workspace whose canonical path is an ancestor of `cwd` with the

@@ -1,5 +1,6 @@
-use jjwt::core::plan::plan_list;
+use jjwt::core::plan::{ci_status_for, plan_list};
 use jjwt::core::types::*;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 const DISPLAY: DisplayHints = DisplayHints {
@@ -37,8 +38,6 @@ fn obs_with_workspaces() -> ObservedListState {
     repo_root: PathBuf::from("/repo"),
     is_jj_repo: true,
     current_workspace: Some("default".into()),
-    extra_bookmark_names: Vec::new(),
-    extra_remote_only_names: Vec::new(),
     full: true,
     rows: vec![
       ObservedListRow {
@@ -50,7 +49,7 @@ fn obs_with_workspaces() -> ObservedListState {
         details: details("aaaaaaaa", "init"),
         ahead: 0,
         behind: 0,
-        has_remote_bookmark: false,
+        bookmarks: vec![],
         ci_status: CiStatus::None,
         summary: String::new(),
       },
@@ -63,7 +62,7 @@ fn obs_with_workspaces() -> ObservedListState {
         details: details("bbbbbbbb", "feat: thing"),
         ahead: 3,
         behind: 1,
-        has_remote_bookmark: true,
+        bookmarks: vec![],
         ci_status: CiStatus::None,
         summary: String::new(),
       },
@@ -207,7 +206,6 @@ fn list_json_format_includes_all_fields() {
   // Check default workspace
   let default_ws = &parsed[0];
 
-  assert_eq!(default_ws["kind"], "workspace");
   assert_eq!(default_ws["is_current"], true);
   assert_eq!(default_ws["is_default"], true);
   assert_eq!(default_ws["commit"], "aaaaaaaa");
@@ -281,25 +279,6 @@ fn list_statusline_format_emits_compact_line() {
 }
 
 #[test]
-fn list_json_with_extra_bookmark_rows() {
-  let mut obs = obs_with_workspaces();
-
-  obs.extra_bookmark_names = vec!["orphan-branch".into()];
-
-  let plan = plan_list(&cfg_with_list(), &obs, &DISPLAY, OutputFormat::Json).expect("plan ok");
-
-  let Action::PrintLine(out) = &plan.actions[0] else {
-    panic!()
-  };
-
-  let parsed: Vec<serde_json::Value> = serde_json::from_str(out).expect("valid json array");
-
-  assert_eq!(parsed.len(), 3);
-  assert_eq!(parsed[2]["name"], "orphan-branch");
-  assert_eq!(parsed[2]["kind"], "bookmark");
-}
-
-#[test]
 fn list_compact_mode_hides_url_column() {
   let mut obs = obs_with_workspaces();
 
@@ -338,4 +317,60 @@ fn list_full_mode_shows_url_column() {
     out.contains("http://example.com/default"),
     "URL should be shown in full mode:\n{out}"
   );
+}
+#[test]
+fn remote_marker_comes_from_any_bookmark_in_range() {
+  let mut obs = obs_with_workspaces();
+
+  obs.rows[1].bookmarks = vec![WorkspaceBookmark {
+    name: "cs/login-timeout".into(),
+    has_remote: true,
+  }];
+
+  let plan = plan_list(&cfg_with_list(), &obs, &DISPLAY, OutputFormat::Json).unwrap();
+  let Action::PrintLine(body) = &plan.actions[0] else {
+    panic!()
+  };
+  let rows: serde_json::Value = serde_json::from_str(body).unwrap();
+
+  assert_eq!(rows[1]["status"]["has_remote"], true);
+}
+
+#[test]
+fn remote_marker_absent_without_a_pushed_bookmark() {
+  let mut obs = obs_with_workspaces();
+
+  obs.rows[1].bookmarks = vec![WorkspaceBookmark {
+    name: "cs/local-only".into(),
+    has_remote: false,
+  }];
+
+  let plan = plan_list(&cfg_with_list(), &obs, &DISPLAY, OutputFormat::Json).unwrap();
+  let Action::PrintLine(body) = &plan.actions[0] else {
+    panic!()
+  };
+  let rows: serde_json::Value = serde_json::from_str(body).unwrap();
+
+  assert_eq!(rows[1]["status"]["has_remote"], false);
+}
+
+#[test]
+fn ci_status_uses_nearest_bookmark_with_a_pr() {
+  let bms = vec![
+    WorkspaceBookmark {
+      name: "no-pr".into(),
+      has_remote: false,
+    },
+    WorkspaceBookmark {
+      name: "cs/fix".into(),
+      has_remote: true,
+    },
+  ];
+  let statuses = HashMap::from([
+    ("no-pr".to_string(), CiStatus::None),
+    ("cs/fix".to_string(), CiStatus::Pass),
+  ]);
+
+  assert_eq!(ci_status_for(&bms, &statuses), CiStatus::Pass);
+  assert_eq!(ci_status_for(&[], &statuses), CiStatus::None);
 }

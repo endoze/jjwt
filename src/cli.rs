@@ -61,7 +61,7 @@ enum Cmd {
   Switch(SwitchCmd),
   /// Remove one or more workspaces.
   Remove(RemoveCmd),
-  /// List workspaces and bookmarks.
+  /// List workspaces.
   List(ListCmd),
   /// Run or inspect hooks.
   Hook(HookCmd),
@@ -105,18 +105,6 @@ enum StepSub {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
     cmd: Vec<String>,
   },
-  /// Remove workspaces whose bookmarks are merged into trunk.
-  Prune {
-    /// Show what would be pruned without actually removing.
-    #[arg(long)]
-    dry_run: bool,
-    /// Skip configured hooks.
-    #[arg(long = "no-hooks")]
-    no_hooks: bool,
-    /// Output format: `text` (default) or `json`.
-    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
-    format: OutputFormat,
-  },
   /// Rename a workspace and move its directory.
   Relocate {
     /// Current workspace name.
@@ -124,9 +112,6 @@ enum StepSub {
     old_name: String,
     /// New workspace name.
     new_name: String,
-    /// Also rename the bookmark.
-    #[arg(long)]
-    rename_bookmark: bool,
     /// Output format: `text` (default) or `json`.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
@@ -199,8 +184,9 @@ struct SwitchCmd {
   /// Remove a stale directory at the target workspace path before creating.
   #[arg(long)]
   clobber: bool,
-  /// Base revision for the new workspace (bookmark name, change ID, etc.).
-  /// Defaults to the trunk bookmark. Only used with --create.
+  /// Base revision for the new workspace: a local bookmark name, a full
+  /// commit id, or `^` for `trunk()`. Defaults to `trunk()`. Only used with
+  /// --create.
   #[arg(short = 'b', long, requires = "create", add = crate::completion::bookmark_completer())]
   base: Option<String>,
   /// Skip configured hooks for this invocation.
@@ -223,21 +209,9 @@ struct RemoveCmd {
   /// Workspaces to remove. When omitted, defaults to the current workspace.
   #[arg(num_args = 0.., add = crate::completion::workspace_completer())]
   names: Vec<String>,
-  /// Force worktree removal: bypass the "uncommitted changes" check.
-  #[arg(short, long)]
-  force: bool,
-  /// Keep the bookmark even if it is merged into trunk.
-  #[arg(long = "no-delete-branch")]
-  no_delete_branch: bool,
-  /// Delete the bookmark even when not merged (worktrunk's `-D`).
-  #[arg(short = 'D', long = "force-delete")]
-  force_delete: bool,
   /// Skip configured hooks for this invocation.
   #[arg(long = "no-hooks")]
   no_hooks: bool,
-  /// Deprecated alias for `--no-hooks`.
-  #[arg(long = "no-verify", hide = true)]
-  no_verify: bool,
   /// Show what would be done without actually doing it.
   #[arg(long)]
   dry_run: bool,
@@ -249,12 +223,6 @@ struct RemoveCmd {
 /// Arguments for the `list` command.
 #[derive(Args)]
 struct ListCmd {
-  /// Include local bookmarks that don't have a workspace.
-  #[arg(long)]
-  bookmarks: bool,
-  /// Include remote-only bookmarks.
-  #[arg(long)]
-  remotes: bool,
   /// Show additional columns (CI, URL, Commit, Age, Summary).
   #[arg(long)]
   full: bool,
@@ -408,24 +376,12 @@ pub fn run() -> Result<()> {
       config,
       r.names,
       RemoveArgs {
-        force: r.force,
-        no_hooks: r.no_hooks || r.no_verify,
-        no_delete_branch: r.no_delete_branch,
-        force_delete: r.force_delete,
+        no_hooks: r.no_hooks,
         dry_run: r.dry_run,
         format: r.format.into(),
       },
     ),
-    Cmd::List(l) => cmd::list::run(
-      cwd,
-      config,
-      ListOptions {
-        include_bookmarks: l.bookmarks,
-        include_remotes: l.remotes,
-        full: l.full,
-      },
-      l.format.into(),
-    ),
+    Cmd::List(l) => cmd::list::run(cwd, config, ListOptions { full: l.full }, l.format.into()),
     Cmd::Hook(h) => {
       if h.show {
         let source_filter = h.source.map(HookSource::from);
@@ -473,24 +429,11 @@ pub fn run() -> Result<()> {
 
         std::process::exit(code);
       }
-      StepSub::Prune {
-        dry_run,
-        no_hooks,
-        format,
-      } => cmd::step_prune::run(cwd, config, dry_run, no_hooks, format.into()),
       StepSub::Relocate {
         old_name,
         new_name,
-        rename_bookmark,
         format,
-      } => cmd::step_relocate::run(
-        cwd,
-        config,
-        old_name,
-        new_name,
-        rename_bookmark,
-        format.into(),
-      ),
+      } => cmd::step_relocate::run(cwd, config, old_name, new_name, format.into()),
       StepSub::Describe { dry_run } => cmd::step_describe::run(cwd, config, dry_run),
       StepSub::Pick => cmd::step_pick::run(cwd, config),
       StepSub::CopyIgnored { source, dest } => {

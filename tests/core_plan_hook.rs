@@ -32,8 +32,6 @@ fn obs() -> ObservedState {
       stale: false,
     }],
     target_path_exists: true,
-    target_workspace_dirty: false,
-    target_bookmark_merged: true,
     target_bookmark_exists: true,
     ..Default::default()
   }

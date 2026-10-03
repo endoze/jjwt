@@ -200,21 +200,31 @@ fn plan_switch_create(
     } else {
       None
     })
-    .or(obs.trunk_bookmark.as_ref())
+    .or(obs.trunk.as_ref().map(|t| &t.commit_id))
     .cloned();
+
+  // Adopting an existing bookmark of the same name (no explicit `--base`).
+  // When that bookmark's commit is empty and not already checked out by
+  // another workspace, land `@` directly on it (jj edit) instead of stacking
+  // a redundant empty change on top (jj new).
+  let adopting = args.base.is_none() && obs.target_bookmark_exists;
+  let edit_in_place = adopting && obs.target_bookmark_empty && !obs.target_bookmark_occupied;
 
   plan.push(Action::JjWorkspaceAdd {
     name: args.name.clone(),
     path: ws_path.clone(),
     revision,
+    edit_in_place,
   });
 
-  if !obs.target_bookmark_exists {
-    plan.push(Action::JjBookmarkCreate {
-      name: args.name.clone(),
-      workspace: args.name.clone(),
-    });
+  if adopting && obs.target_bookmark_empty && obs.target_bookmark_occupied {
+    plan.push(Action::Note(format!(
+      "'{}' points at a commit already checked out in another workspace; \
+       created a new change on top to avoid divergence.",
+      args.name
+    )));
   }
+
   plan.push(Action::JjWorkspaceUpdateStale {
     name: args.name.clone(),
   });
@@ -403,22 +413,8 @@ pub fn plan_remove(
     .find(|w| w.name == name)
     .ok_or_else(|| CoreError::WorkspaceMissing(name.to_string()))?;
 
-  if !args.force && obs.target_workspace_dirty {
-    return Err(CoreError::WorkspaceDirty(name.to_string()));
-  }
-
-  // Unmerged-bookmark guard fires when the bookmark would be deleted
-  // (the default) and isn't yet merged into trunk. `--force-delete`
-  // (worktrunk's `-D`) opts in to deleting it anyway; `--force` (`-f`)
-  // is about the worktree, not the bookmark, and on its own only
-  // lets the *worktree* be removed — the bookmark stays.
-  if !args.no_delete_branch
-    && obs.target_bookmark_exists
-    && !obs.target_bookmark_merged
-    && !args.force_delete
-    && !args.force
-  {
-    return Err(CoreError::BookmarkUnmerged(name.to_string()));
+  if ws.name == "default" || ws.path == obs.repo_root {
+    return Err(CoreError::DefaultWorkspace("remove"));
   }
 
   let ws_path = ws.path.clone();
@@ -433,6 +429,11 @@ pub fn plan_remove(
     &obs.repo_root,
   )?;
 
+  plan.push(Action::JjSnapshot {
+    name: name.to_string(),
+    path: ws_path.clone(),
+    stale: ws.stale,
+  });
   plan.push(Action::JjWorkspaceForget {
     name: name.to_string(),
   });
@@ -444,21 +445,6 @@ pub fn plan_remove(
   } else {
     plan.push(Action::DeleteDir {
       path: ws_path.clone(),
-    });
-  }
-
-  // Delete the bookmark when:
-  //   - it exists,
-  //   - the user hasn't opted out via --no-delete-branch,
-  //   - AND it's either already merged into trunk or the user explicitly
-  //     asked for forced deletion (`-D`).
-  let bookmark_deleted = obs.target_bookmark_exists
-    && !args.no_delete_branch
-    && (obs.target_bookmark_merged || args.force_delete);
-
-  if bookmark_deleted {
-    plan.push(Action::JjBookmarkDelete {
-      name: name.to_string(),
     });
   }
 
@@ -476,11 +462,7 @@ pub fn plan_remove(
   )?;
 
   if let OutputFormat::Json = args.format {
-    plan.push(Action::PrintLine(format_remove_json(
-      name,
-      &ws_path,
-      bookmark_deleted,
-    )));
+    plan.push(Action::PrintLine(format_remove_json(name, &ws_path)));
   }
 
   Ok(plan)
@@ -673,6 +655,10 @@ pub fn plan_relocate(
     .find(|w| w.name == args.old_name)
     .ok_or_else(|| CoreError::WorkspaceMissing(args.old_name.clone()))?;
 
+  if ws.name == "default" || ws.path == obs.repo_root {
+    return Err(CoreError::DefaultWorkspace("relocate"));
+  }
+
   if obs.workspaces.iter().any(|w| w.name == args.new_name) {
     return Err(CoreError::WorkspaceExists(args.new_name.clone()));
   }
@@ -695,13 +681,6 @@ pub fn plan_relocate(
     to: new_path.clone(),
   });
 
-  if args.rename_bookmark {
-    plan.push(Action::JjBookmarkRename {
-      old_name: args.old_name.clone(),
-      new_name: args.new_name.clone(),
-    });
-  }
-
   match args.format {
     OutputFormat::Json => {
       let obj = json!({
@@ -709,7 +688,6 @@ pub fn plan_relocate(
         "new_name": args.new_name,
         "old_path": old_path.display().to_string(),
         "new_path": new_path.display().to_string(),
-        "bookmark_renamed": args.rename_bookmark,
       });
 
       plan.push(Action::PrintLine(
@@ -727,111 +705,28 @@ pub fn plan_relocate(
   Ok(plan)
 }
 
-/// Build a plan for the `prune` subcommand (remove all merged workspaces).
-pub fn plan_prune(
-  cfg: &MergedConfig,
-  args: &PruneArgs,
-  obs: &ObservedPruneState,
-) -> Result<Plan, CoreError> {
-  if !obs.is_jj_repo {
-    return Err(CoreError::NotJjRepo);
-  }
-
-  let mut plan = Plan::new();
-  let mut pruned: Vec<String> = Vec::new();
-
-  for (name, bm_exists, bm_merged, _dirty) in &obs.workspace_status {
-    // Skip default workspace and current workspace.
-    if name == "default" {
-      continue;
-    }
-
-    if obs.current_workspace.as_deref() == Some(name.as_str()) {
-      continue;
-    }
-
-    // Only prune if the bookmark is merged into trunk.
-    if !bm_exists || !bm_merged {
-      continue;
-    }
-
-    let Some(ws) = obs.workspaces.iter().find(|w| &w.name == name) else {
-      continue;
-    };
-
-    if args.dry_run {
-      pruned.push(name.clone());
-
-      continue;
-    }
-
-    // Emit the same actions as plan_remove for each merged workspace.
-    plan.extend_hooks(
-      !args.no_hooks,
-      &cfg.hooks.pre_remove,
-      "pre-remove",
-      name,
-      &ws.path,
-      &obs.repo_root,
-    )?;
-
-    plan.push(Action::JjWorkspaceForget { name: name.clone() });
-
-    if cfg.background_remove == Some(true) {
-      plan.push(Action::DeleteDirBackground {
-        path: ws.path.clone(),
-      });
-    } else {
-      plan.push(Action::DeleteDir {
-        path: ws.path.clone(),
-      });
-    }
-
-    plan.push(Action::JjBookmarkDelete { name: name.clone() });
-
-    plan.extend_hooks(
-      !args.no_hooks,
-      &cfg.hooks.post_remove,
-      "post-remove",
-      name,
-      &obs.repo_root,
-      &obs.repo_root,
-    )?;
-
-    pruned.push(name.clone());
-  }
-
-  // Output.
-  match args.format {
-    OutputFormat::Json => {
-      plan.push(Action::PrintLine(
-        serde_json::to_string(&serde_json::json!({
-          "dry_run": args.dry_run,
-          "pruned": pruned,
-        }))
-        .expect("json"),
-      ));
-    }
-    OutputFormat::Text | OutputFormat::Statusline => {
-      if pruned.is_empty() {
-        plan.push(Action::PrintLine("Nothing to prune.".into()));
-      } else if args.dry_run {
-        plan.push(Action::PrintLine(format!(
-          "Would prune {} workspace(s): {}",
-          pruned.len(),
-          pruned.join(", ")
-        )));
-      } else {
-        plan.push(Action::PrintLine(format!(
-          "Pruned {} workspace(s): {}",
-          pruned.len(),
-          pruned.join(", ")
-        )));
-      }
-    }
-  }
-
-  Ok(plan)
+/// CI status for a workspace: the first of its bookmarks (nearest `@`) that
+/// has a PR.
+///
+/// ```
+/// use std::collections::HashMap;
+/// use jjwt::core::plan::ci_status_for;
+/// use jjwt::core::types::{CiStatus, WorkspaceBookmark};
+///
+/// let bms = [WorkspaceBookmark { name: "fix".into(), has_remote: true }];
+/// let statuses = HashMap::from([("fix".to_string(), CiStatus::Fail)]);
+///
+/// assert_eq!(ci_status_for(&bms, &statuses), CiStatus::Fail);
+/// ```
+pub fn ci_status_for(
+  bookmarks: &[WorkspaceBookmark],
+  statuses: &HashMap<String, CiStatus>,
+) -> CiStatus {
+  bookmarks
+    .iter()
+    .filter_map(|b| statuses.get(&b.name).copied())
+    .find(|s| *s != CiStatus::None)
+    .unwrap_or(CiStatus::None)
 }
 
 /// Derive the trunk relationship from ahead/behind commit counts.
@@ -872,12 +767,12 @@ fn build_list_row(
     String::new()
   };
 
-  // A workspace shows `|` when its bookmark has a remote variant. As a
-  // small convenience: workspaces sitting exactly on `trunk()` also show
-  // `|` since trunk in practice tracks an upstream — this catches the
-  // `default` workspace whose name doesn't itself match a bookmark.
+  // A workspace shows `|` when a bookmark in `trunk()..@` has been pushed.
+  // As a small convenience: workspaces sitting exactly on `trunk()` also
+  // show `|` since trunk in practice tracks an upstream — this catches the
+  // `default` workspace, which usually has no bookmark of its own.
   let is_on_trunk = obs_row.ahead == 0 && obs_row.behind == 0;
-  let has_remote = obs_row.has_remote_bookmark || is_on_trunk;
+  let has_remote = obs_row.bookmarks.iter().any(|b| b.has_remote) || is_on_trunk;
   let status = StatusFlags {
     has_changes: d.head_added > 0 || d.head_removed > 0,
     modified: d.modified,
@@ -901,7 +796,6 @@ fn build_list_row(
     name: w.name.clone(),
     path: w.path.clone(),
     display_path,
-    kind: ListRowKind::Workspace,
     url,
     is_current,
     is_default,
@@ -922,29 +816,6 @@ fn build_list_row(
   })
 }
 
-/// Build a placeholder row for a bookmark that doesn't have a workspace.
-/// Phase 1 leaves working-copy details empty; richer details can be added
-/// in Phase 2 alongside `worktree-path` template support.
-fn build_bookmark_row(name: &str) -> ListRow {
-  ListRow {
-    name: name.into(),
-    path: PathBuf::new(),
-    display_path: String::new(),
-    kind: ListRowKind::Bookmark,
-    url: String::new(),
-    is_current: false,
-    is_default: false,
-    status: StatusFlags::default(),
-    head_diff: LineDiff::default(),
-    vs_trunk: AheadBehind::default(),
-    commit: String::new(),
-    age: String::new(),
-    message: String::new(),
-    ci_status: CiStatus::None,
-    summary: String::new(),
-  }
-}
-
 /// Build a plan for the `list` subcommand (render workspace table).
 pub fn plan_list(
   cfg: &MergedConfig,
@@ -956,22 +827,12 @@ pub fn plan_list(
     return Err(CoreError::NotJjRepo);
   }
 
-  let mut rows = Vec::with_capacity(
-    obs.rows.len() + obs.extra_bookmark_names.len() + obs.extra_remote_only_names.len(),
-  );
+  let mut rows = Vec::with_capacity(obs.rows.len());
 
   for r in &obs.rows {
     let is_current = obs.current_workspace.as_deref() == Some(r.workspace.name.as_str());
 
     rows.push(build_list_row(cfg, r, &obs.repo_root, is_current)?);
-  }
-
-  for n in &obs.extra_bookmark_names {
-    rows.push(build_bookmark_row(n));
-  }
-
-  for n in &obs.extra_remote_only_names {
-    rows.push(build_bookmark_row(n));
   }
 
   let mut plan = Plan::new();

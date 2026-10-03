@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 pub trait Fs {
   /// Check whether a path exists on disk.
   fn exists(&self, path: &Path) -> bool;
-  /// Recursively remove a directory and all its contents.
+  /// Recursively remove a directory and all its contents. A missing
+  /// directory counts as removed.
   fn remove_dir_all(&self, path: &Path) -> Result<()>;
   /// Return the current working directory.
   fn current_dir(&self) -> Result<PathBuf>;
@@ -26,7 +27,10 @@ impl Fs for RealFs {
   }
 
   fn remove_dir_all(&self, path: &Path) -> Result<()> {
-    std::fs::remove_dir_all(path).map_err(Into::into)
+    match std::fs::remove_dir_all(path) {
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+      r => r.map_err(Into::into),
+    }
   }
 
   fn current_dir(&self) -> Result<PathBuf> {

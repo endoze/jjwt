@@ -28,9 +28,7 @@ pub mod step_eval;
 pub mod step_for_each;
 /// Interactive fuzzy workspace picker.
 pub mod step_pick;
-/// Remove workspaces whose bookmarks are merged into trunk.
-pub mod step_prune;
-/// Rename/move a workspace and optionally its bookmark.
+/// Rename/move a workspace and its directory.
 pub mod step_relocate;
 /// Tie a process lifetime to the current workspace directory.
 pub mod step_tether;

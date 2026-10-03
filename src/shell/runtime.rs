@@ -69,18 +69,16 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         name,
         path,
         revision,
+        edit_in_place,
       } => {
         rt.jj
-          .workspace_add(&rt.repo_root, name, path, revision.as_deref())?;
+          .workspace_add(&rt.repo_root, name, path, revision.as_deref(), *edit_in_place)?;
       }
-      Action::JjBookmarkCreate { name, workspace } => {
-        rt.jj.bookmark_create(&rt.repo_root, name, workspace)?;
+      Action::JjSnapshot { path, stale, .. } => {
+        rt.jj.workspace_snapshot(path, *stale)?;
       }
       Action::JjWorkspaceForget { name } => {
         rt.jj.workspace_forget(&rt.repo_root, name)?;
-      }
-      Action::JjBookmarkDelete { name } => {
-        rt.jj.bookmark_delete(&rt.repo_root, name)?;
       }
       Action::JjWorkspaceUpdateStale { name } => {
         rt.jj.workspace_update_stale(&rt.repo_root, name)?;
@@ -94,9 +92,6 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
       Action::RenameDir { from, to } => {
         rt.fs.rename(from, to)?;
       }
-      Action::JjBookmarkRename { old_name, new_name } => {
-        rt.jj.bookmark_rename(&rt.repo_root, old_name, new_name)?;
-      }
       Action::DeleteDirBackground { path } => {
         let ts = std::time::SystemTime::now()
           .duration_since(std::time::UNIX_EPOCH)
@@ -106,9 +101,15 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         let trash_path = trash_dir.join(ts.to_string());
 
         rt.fs.create_dir_all(&trash_dir)?;
-        rt.fs.rename(path, &trash_path)?;
-        rt.proc
-          .spawn_detached("rm", &["-rf", &trash_path.display().to_string()])?;
+
+        match rt.fs.rename(path, &trash_path) {
+          Ok(()) => {
+            rt.proc
+              .spawn_detached("rm", &["-rf", &trash_path.display().to_string()])?;
+          }
+          Err(_) if !rt.fs.exists(path) => {}
+          Err(e) => return Err(e),
+        }
       }
       Action::RunHook {
         name,
@@ -145,6 +146,9 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
       }
       Action::PrintLine(s) => {
         printed.push(s.clone());
+      }
+      Action::Note(s) => {
+        announce_note(s);
       }
     }
   }
@@ -201,6 +205,18 @@ fn announce_hook_failure(name: &str, status: i32, rendered_cmd: &str) {
     eprintln!("\x1b[31m{header}\x1b[0m");
   } else {
     eprintln!("{header}");
+  }
+}
+
+/// Print an informational note to stderr. Stdout is reserved for the
+/// `PrintLine` payload the shell wrapper consumes, so notes go to stderr.
+fn announce_note(msg: &str) {
+  let color = use_color_stderr();
+
+  if color {
+    eprintln!("\x1b[33m{msg}\x1b[0m");
+  } else {
+    eprintln!("{msg}");
   }
 }
 

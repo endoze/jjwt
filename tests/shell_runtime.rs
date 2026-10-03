@@ -10,12 +10,14 @@ use std::path::{Path, PathBuf};
 #[derive(Default)]
 struct FakeJj {
   calls: RefCell<Vec<String>>,
+  fail_snapshot: bool,
 }
 
 #[derive(Default)]
 struct FakeFs {
   calls: RefCell<Vec<String>>,
   deleted: RefCell<Vec<PathBuf>>,
+  missing: bool,
 }
 
 #[derive(Default)]
@@ -33,13 +35,21 @@ impl Jj for FakeJj {
     Ok(vec![])
   }
 
-  fn workspace_add(&self, _r: &Path, n: &str, p: &Path, rev: Option<&str>) -> Result<()> {
+  fn workspace_add(
+    &self,
+    _r: &Path,
+    n: &str,
+    p: &Path,
+    rev: Option<&str>,
+    edit_in_place: bool,
+  ) -> Result<()> {
     let rev_str = rev.map(|r| format!(" @{r}")).unwrap_or_default();
+    let edit_str = if edit_in_place { " edit" } else { "" };
 
     self
       .calls
       .borrow_mut()
-      .push(format!("workspace_add {n} {}{rev_str}", p.display()));
+      .push(format!("workspace_add {n} {}{rev_str}{edit_str}", p.display()));
 
     if n == "fail" {
       return Err(anyhow::anyhow!("workspace_add boom"));
@@ -57,6 +67,19 @@ impl Jj for FakeJj {
     Ok(())
   }
 
+  fn workspace_snapshot(&self, p: &Path, stale: bool) -> Result<()> {
+    self
+      .calls
+      .borrow_mut()
+      .push(format!("workspace_snapshot {} {stale}", p.display()));
+
+    if self.fail_snapshot {
+      return Err(anyhow::anyhow!("snapshot boom"));
+    }
+
+    Ok(())
+  }
+
   fn workspace_update_stale(&self, _r: &Path, n: &str) -> Result<()> {
     self
       .calls
@@ -66,31 +89,12 @@ impl Jj for FakeJj {
     Ok(())
   }
 
-  fn bookmark_create(&self, _r: &Path, n: &str, w: &str) -> Result<()> {
-    self
-      .calls
-      .borrow_mut()
-      .push(format!("bookmark_create {n} {w}"));
-
-    Ok(())
-  }
-
-  fn bookmark_delete(&self, _r: &Path, n: &str) -> Result<()> {
-    self.calls.borrow_mut().push(format!("bookmark_delete {n}"));
-
-    Ok(())
-  }
-
   fn bookmark_exists(&self, _r: &Path, _n: &str) -> Result<bool> {
     Ok(false)
   }
 
-  fn bookmark_is_merged_into_trunk(&self, _r: &Path, _n: &str) -> Result<bool> {
-    Ok(false)
-  }
-
-  fn workspace_is_dirty(&self, _r: &Path, _w: &str) -> Result<bool> {
-    Ok(false)
+  fn bookmark_commit_state(&self, _r: &Path, _n: &str) -> Result<(bool, bool)> {
+    Ok((false, false))
   }
 
   fn workspace_status(&self, _r: &Path, _w: &str) -> Result<(bool, bool)> {
@@ -117,19 +121,19 @@ impl Jj for FakeJj {
     Ok(std::collections::HashMap::new())
   }
 
-  fn bookmarks_with_remote(&self, _r: &Path) -> Result<std::collections::HashSet<String>> {
-    Ok(std::collections::HashSet::new())
-  }
-
   fn bookmarks_local(&self, _r: &Path) -> Result<Vec<String>> {
     Ok(Vec::new())
   }
 
-  fn bookmark_sets(&self, _r: &Path) -> Result<(Vec<String>, std::collections::HashSet<String>)> {
-    Ok((Vec::new(), std::collections::HashSet::new()))
+  fn workspace_bookmarks_batch(
+    &self,
+    _r: &Path,
+    _w: &[String],
+  ) -> Result<std::collections::HashMap<String, Vec<WorkspaceBookmark>>> {
+    Ok(std::collections::HashMap::new())
   }
 
-  fn trunk_bookmark(&self, _r: &Path) -> Result<Option<String>> {
+  fn trunk(&self, _r: &Path) -> Result<Option<Trunk>> {
     Ok(None)
   }
 
@@ -144,15 +148,6 @@ impl Jj for FakeJj {
       .calls
       .borrow_mut()
       .push(format!("workspace_rename {old} {new}"));
-
-    Ok(())
-  }
-
-  fn bookmark_rename(&self, _r: &Path, old: &str, new: &str) -> Result<()> {
-    self
-      .calls
-      .borrow_mut()
-      .push(format!("bookmark_rename {old} {new}"));
 
     Ok(())
   }
@@ -182,6 +177,10 @@ impl Fs for FakeFs {
       .calls
       .borrow_mut()
       .push(format!("rename {} {}", from.display(), to.display()));
+
+    if self.missing {
+      return Err(anyhow::anyhow!("No such file or directory"));
+    }
 
     Ok(())
   }
@@ -267,10 +266,7 @@ fn execute_runs_actions_in_order() {
         name: "x".into(),
         path: PathBuf::from("/repo/.worktrees/x"),
         revision: None,
-      },
-      Action::JjBookmarkCreate {
-        name: "x".into(),
-        workspace: "x".into(),
+        edit_in_place: false,
       },
       Action::RunHook {
         name: "h".into(),
@@ -290,13 +286,27 @@ fn execute_runs_actions_in_order() {
 
   assert_eq!(
     calls_jj,
-    vec![
-      "workspace_add x /repo/.worktrees/x".to_string(),
-      "bookmark_create x x".to_string(),
-    ]
+    vec!["workspace_add x /repo/.worktrees/x".to_string()]
   );
   assert_eq!(calls_proc.len(), 1);
   assert!(calls_proc[0].starts_with("streamed echo hi"));
+  assert_eq!(printed, vec!["/repo/.worktrees/x".to_string()]);
+}
+
+#[test]
+fn execute_note_is_not_collected_into_stdout() {
+  let mut rt = Runtime::new(FakeJj::default(), FakeFs::default(), FakeProc::default());
+  let plan = Plan {
+    actions: vec![
+      Action::Note("heads up".into()),
+      Action::PrintLine("/repo/.worktrees/x".into()),
+    ],
+  };
+
+  let printed = execute(&plan, &mut rt).expect("ok");
+
+  // Notes go to stderr; only PrintLine payloads are returned for the shell
+  // wrapper to consume on stdout.
   assert_eq!(printed, vec!["/repo/.worktrees/x".to_string()]);
 }
 
@@ -346,6 +356,7 @@ fn execute_still_fatal_on_infrastructure_failure() {
         name: "fail".into(),
         path: PathBuf::from("/repo/.worktrees/fail"),
         revision: None,
+        edit_in_place: false,
       },
       Action::PrintLine("unreached".into()),
     ],
@@ -394,4 +405,66 @@ fn execute_delete_dir_background_renames_and_spawns() {
       .any(|c| c.starts_with("spawn_detached rm -rf")),
     "should spawn detached rm: {proc_calls:?}"
   );
+}
+
+#[test]
+fn execute_stops_before_forget_when_snapshot_fails() {
+  let mut rt = Runtime::new(
+    FakeJj {
+      fail_snapshot: true,
+      ..Default::default()
+    },
+    FakeFs::default(),
+    FakeProc::default(),
+  );
+  let path = PathBuf::from("/repo/.worktrees/x");
+  let plan = Plan {
+    actions: vec![
+      Action::JjSnapshot {
+        name: "x".into(),
+        path: path.clone(),
+        stale: false,
+      },
+      Action::JjWorkspaceForget { name: "x".into() },
+      Action::DeleteDir { path },
+    ],
+  };
+
+  assert!(execute(&plan, &mut rt).is_err());
+  assert!(
+    !rt
+      .jj
+      .calls
+      .borrow()
+      .iter()
+      .any(|c| c.starts_with("workspace_forget"))
+  );
+  assert!(rt.fs.deleted.borrow().is_empty());
+}
+
+#[test]
+fn execute_background_delete_skips_already_missing_directory() {
+  let mut rt = Runtime::new(
+    FakeJj::default(),
+    FakeFs {
+      missing: true,
+      ..Default::default()
+    },
+    FakeProc::default(),
+  )
+  .with_root(PathBuf::from("/repo"));
+  let plan = Plan {
+    actions: vec![
+      Action::DeleteDirBackground {
+        path: PathBuf::from("/repo/.worktrees/gone"),
+      },
+      Action::PrintLine("reached".into()),
+    ],
+  };
+
+  assert_eq!(
+    execute(&plan, &mut rt).expect("ok"),
+    vec!["reached".to_string()]
+  );
+  assert!(rt.proc.calls.borrow().is_empty());
 }

@@ -12,28 +12,32 @@ pub trait Jj {
   /// Enumerate workspaces with name, path, and stale flag.
   fn workspace_list(&self, repo_root: &Path) -> Result<Vec<Workspace>>;
   /// `jj workspace add --name <name> <path>`, optionally checking out a
-  /// specific revision instead of the root changeset.
+  /// specific revision instead of the root changeset. When `edit_in_place`
+  /// is true, the new workspace's `@` is set directly onto `revision`
+  /// (jj edit) rather than a new empty child commit on top (jj new).
   fn workspace_add(
     &self,
     repo_root: &Path,
     name: &str,
     path: &Path,
     revision: Option<&str>,
+    edit_in_place: bool,
   ) -> Result<()>;
+  /// `jj util snapshot` in the workspace at `path`, after
+  /// `jj workspace update-stale` when `stale`. A missing directory is a
+  /// no-op; any jj failure is an error.
+  fn workspace_snapshot(&self, path: &Path, stale: bool) -> Result<()>;
   /// `jj workspace forget <name>`
   fn workspace_forget(&self, repo_root: &Path, name: &str) -> Result<()>;
   /// `jj workspace update-stale` for the named workspace
   fn workspace_update_stale(&self, repo_root: &Path, name: &str) -> Result<()>;
-  /// Create a bookmark at the named workspace's `@`.
-  fn bookmark_create(&self, repo_root: &Path, name: &str, workspace: &str) -> Result<()>;
-  /// `jj bookmark delete <name>`
-  fn bookmark_delete(&self, repo_root: &Path, name: &str) -> Result<()>;
   /// True if a bookmark with this name exists.
   fn bookmark_exists(&self, repo_root: &Path, name: &str) -> Result<bool>;
-  /// True if the bookmark's target is an ancestor of trunk.
-  fn bookmark_is_merged_into_trunk(&self, repo_root: &Path, name: &str) -> Result<bool>;
-  /// True if `jj status` for the workspace shows any uncommitted changes.
-  fn workspace_is_dirty(&self, repo_root: &Path, workspace: &str) -> Result<bool>;
+  /// For a bookmark candidate for in-place adoption, report
+  /// `(is_empty, is_occupied)`: whether its target commit is empty, and
+  /// whether that commit is already some workspace's working copy.
+  /// `(false, false)` if the bookmark is absent.
+  fn bookmark_commit_state(&self, repo_root: &Path, name: &str) -> Result<(bool, bool)>;
   /// Per-workspace status flags (modified, untracked) for list rendering.
   /// Only collects data that cannot be obtained from
   /// [`Jj::workspace_commit_info_batch`] (which handles commit metadata,
@@ -59,30 +63,23 @@ pub trait Jj {
     repo_root: &Path,
     workspaces: &[String],
   ) -> Result<std::collections::HashMap<String, (u32, u32)>>;
-  /// Set of local bookmark names that have at least one remote-tracking
-  /// variant (e.g. `name@origin`). Used to decide whether to render the
-  /// "tracks remote" glyph in the list view.
-  fn bookmarks_with_remote(&self, repo_root: &Path) -> Result<std::collections::HashSet<String>>;
-  /// All local bookmark names (one entry per bookmark, no `@<remote>`
-  /// suffix). Used by `list --bookmarks` and `--remotes` to discover
-  /// bookmarks that don't have an associated workspace.
-  fn bookmarks_local(&self, repo_root: &Path) -> Result<Vec<String>>;
-  /// All bookmark sets in one call. Returns `(all_local, with_remote)`.
-  /// `all_local` is every local bookmark name; `with_remote` is the subset
-  /// that has at least one remote-tracking variant.
-  fn bookmark_sets(
+  /// Local bookmarks in `trunk()..@` for each named workspace, nearest `@`
+  /// first. Empty for every workspace when `trunk()` is `root()`.
+  fn workspace_bookmarks_batch(
     &self,
     repo_root: &Path,
-  ) -> Result<(Vec<String>, std::collections::HashSet<String>)>;
-  /// Name of the bookmark at `trunk()`, if any (typically "main" or "master").
-  /// Used so `switch <default-branch>` routes to the default workspace.
-  fn trunk_bookmark(&self, repo_root: &Path) -> Result<Option<String>>;
+    workspaces: &[String],
+  ) -> Result<std::collections::HashMap<String, Vec<crate::core::types::WorkspaceBookmark>>>;
+  /// All local bookmark names (one entry per bookmark, no `@<remote>`
+  /// suffix). Used for shell completion.
+  fn bookmarks_local(&self, repo_root: &Path) -> Result<Vec<String>>;
+  /// What `trunk()` resolves to, or `None` when it is `root()`. Its name
+  /// lets `switch <default-branch>` route to the default workspace.
+  fn trunk(&self, repo_root: &Path) -> Result<Option<crate::core::types::Trunk>>;
   /// Run `jj git fetch` to update remote refs.
   fn git_fetch(&self, repo_root: &Path) -> Result<()>;
   /// Rename a workspace.
   fn workspace_rename(&self, repo_root: &Path, old: &str, new: &str) -> Result<()>;
-  /// Rename a bookmark (create new at old's target, then delete old).
-  fn bookmark_rename(&self, repo_root: &Path, old: &str, new: &str) -> Result<()>;
 }
 
 /// Walk up from `start` to find the nearest directory containing `.jj/`.

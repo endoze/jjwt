@@ -38,12 +38,9 @@ pub enum CoreError {
   /// No workspace with this name is registered.
   #[error("workspace '{0}' does not exist")]
   WorkspaceMissing(String),
-  /// Workspace has uncommitted changes and `--force` was not given.
-  #[error("workspace '{0}' has uncommitted changes (use --force)")]
-  WorkspaceDirty(String),
-  /// Bookmark is not merged into trunk and forced deletion was not requested.
-  #[error("bookmark '{0}' is not fully merged into trunk (use --force)")]
-  BookmarkUnmerged(String),
+  /// The workspace holding the repo store cannot be removed or relocated.
+  #[error("refusing to {0} the default workspace")]
+  DefaultWorkspace(&'static str),
   /// Current directory is not inside a jj repository.
   #[error("not inside a jj repo")]
   NotJjRepo,
@@ -460,6 +457,65 @@ pub struct Workspace {
   pub stale: bool,
 }
 
+/// The commit jj's `trunk()` revset resolves to, with a display name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trunk {
+  /// First remote bookmark name on the trunk commit, or `"trunk"`.
+  pub name: String,
+  /// Full hex commit id.
+  pub commit_id: String,
+}
+
+impl Trunk {
+  /// Parse one `commit_id\tname name...` line. The name is `main`, `master`
+  /// or `trunk` when one of them is present (the names jj's default `trunk()`
+  /// alias looks for), otherwise the first name. Empty input means `trunk()`
+  /// resolved to `root()`.
+  ///
+  /// ```
+  /// use jjwt::core::types::Trunk;
+  ///
+  /// assert_eq!(Trunk::parse("abc\tmain\n").unwrap().name, "main");
+  /// assert_eq!(Trunk::parse(""), None);
+  /// ```
+  pub fn parse(output: &str) -> Option<Trunk> {
+    let line = output.lines().find(|l| !l.trim().is_empty())?;
+    let (id, names) = line.split_once('\t').unwrap_or((line, ""));
+    let all: Vec<&str> = names.split_whitespace().collect();
+    let name = ["main", "master", "trunk"]
+      .into_iter()
+      .find(|n| all.contains(n))
+      .or_else(|| all.first().copied())
+      .unwrap_or("trunk")
+      .to_string();
+
+    Some(Trunk {
+      name,
+      commit_id: id.trim().to_string(),
+    })
+  }
+}
+
+/// Oldest jj CLI (major, minor) jjwt works with: `jj util snapshot` first
+/// shipped in 0.39.
+pub const MIN_JJ_VERSION: (u32, u32) = (0, 39);
+
+/// Parse `jj version` output into (major, minor).
+///
+/// ```
+/// use jjwt::core::types::parse_jj_version;
+///
+/// assert_eq!(parse_jj_version("jj 0.45.1"), Some((0, 45)));
+/// ```
+pub fn parse_jj_version(output: &str) -> Option<(u32, u32)> {
+  let version = output.trim().strip_prefix("jj ")?;
+  let mut parts = version.split(|c: char| !c.is_ascii_digit());
+  let major = parts.next()?.parse().ok()?;
+  let minor = parts.next()?.parse().ok()?;
+
+  Some((major, minor))
+}
+
 /// Snapshot of the repository and workspace state observed by the shell.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ObservedState {
@@ -473,20 +529,20 @@ pub struct ObservedState {
   pub current_workspace: Option<String>,
   /// Whether the target workspace path already exists on disk (for switch --create).
   pub target_path_exists: bool,
-  /// `jj status` output non-empty for the target workspace (for remove).
-  pub target_workspace_dirty: bool,
-  /// Whether the bookmark's target is an ancestor of trunk (for remove).
-  pub target_bookmark_merged: bool,
-  /// Whether the bookmark exists at all (for remove).
+  /// Whether a bookmark named after the target exists (for switch).
   pub target_bookmark_exists: bool,
+  /// Target bookmark exists and points at an empty commit.
+  pub target_bookmark_empty: bool,
+  /// Target bookmark's commit is already another workspace's working copy.
+  pub target_bookmark_occupied: bool,
   /// Workspace name that `target_name` resolves to when it isn't itself a
-  /// workspace. Set when `target_name` equals the trunk bookmark, in which
+  /// workspace. Set when `target_name` equals the trunk name, in which
   /// case it resolves to "default". Mirrors worktrunk's behavior of using
   /// the default branch name to address the root worktree.
   pub target_resolved_workspace: Option<String>,
-  /// Name of the trunk bookmark (e.g. "main", "master"). Used as the
-  /// default base revision when creating workspaces.
-  pub trunk_bookmark: Option<String>,
+  /// What jj's `trunk()` resolves to, if anything but `root()`. Its commit
+  /// is the default base revision when creating workspaces.
+  pub trunk: Option<Trunk>,
 }
 
 /// A single step in an execution plan produced by the planner.
@@ -498,26 +554,28 @@ pub enum Action {
     name: String,
     /// On-disk path for the new workspace.
     path: PathBuf,
-    /// Base revision (bookmark name) to check out after creation. When
-    /// set, the new workspace's `@` is reparented from root onto this
-    /// revision.
+    /// Base revision (bookmark name or hex commit id) to check out after
+    /// creation. When set, the new workspace's `@` is reparented from root
+    /// onto this revision.
     revision: Option<String>,
+    /// When true, set the new workspace's `@` directly onto `revision`
+    /// (jj edit) instead of creating a new empty child commit on top
+    /// (jj new). Used when adopting an existing, empty, unoccupied bookmark.
+    edit_in_place: bool,
   },
-  /// Create a jj bookmark pointing at the workspace's working copy.
-  JjBookmarkCreate {
-    /// Bookmark name to create.
+  /// Snapshot a workspace's files into its working-copy commit so nothing
+  /// on disk is lost when it is forgotten. Fails closed.
+  JjSnapshot {
+    /// Workspace name, for display.
     name: String,
-    /// Workspace whose `@` the bookmark targets.
-    workspace: String,
+    /// Workspace directory to snapshot from.
+    path: PathBuf,
+    /// Run `jj workspace update-stale` first.
+    stale: bool,
   },
   /// Unregister a jj workspace (does not delete files).
   JjWorkspaceForget {
     /// Workspace name to forget.
-    name: String,
-  },
-  /// Delete a jj bookmark.
-  JjBookmarkDelete {
-    /// Bookmark name to delete.
     name: String,
   },
   /// Bring a stale workspace up to date.
@@ -549,13 +607,6 @@ pub enum Action {
     /// Destination path.
     to: PathBuf,
   },
-  /// Rename a jj bookmark.
-  JjBookmarkRename {
-    /// Current bookmark name.
-    old_name: String,
-    /// New bookmark name.
-    new_name: String,
-  },
   /// Execute a rendered hook command in a subprocess.
   RunHook {
     /// Named key of the hook inside its group.
@@ -586,6 +637,9 @@ pub enum Action {
   },
   /// Print a line to stdout (consumed by the shell wrapper).
   PrintLine(String),
+  /// Print an informational note to stderr (does not affect the stdout the
+  /// shell wrapper consumes).
+  Note(String),
 }
 
 /// An ordered sequence of actions to be executed by the runtime.
@@ -643,7 +697,7 @@ pub struct SwitchArgs {
   /// stale path lives inside another registered workspace.
   pub clobber: bool,
   /// Base revision (bookmark name, etc.) for the new workspace. When
-  /// omitted, defaults to the trunk bookmark. Only used with `--create`.
+  /// omitted, defaults to the `trunk()` commit. Only used with `--create`.
   pub base: Option<String>,
   /// Only show what would be done without actually doing it.
   pub dry_run: bool,
@@ -654,17 +708,8 @@ pub struct SwitchArgs {
 /// Arguments for the `remove` subcommand.
 #[derive(Debug, Clone, Default)]
 pub struct RemoveArgs {
-  /// Force worktree removal: bypass the "uncommitted changes" check.
-  /// Worktrunk's `-f`.
-  pub force: bool,
   /// Skip all hooks for this invocation.
   pub no_hooks: bool,
-  /// Never delete the bookmark, even if it is merged into trunk.
-  /// Worktrunk's `--no-delete-branch`.
-  pub no_delete_branch: bool,
-  /// Delete the bookmark even when not merged into trunk. Worktrunk's
-  /// `-D` / `--force-delete`.
-  pub force_delete: bool,
   /// Only show what would be done without actually doing it.
   pub dry_run: bool,
   /// Output format (text, JSON, or statusline).
@@ -698,19 +743,6 @@ pub struct RelocateArgs {
   pub old_name: String,
   /// Desired new workspace name.
   pub new_name: String,
-  /// Also rename the associated bookmark.
-  pub rename_bookmark: bool,
-  /// Output format (text, JSON, or statusline).
-  pub format: OutputFormat,
-}
-
-/// Arguments for the `prune` subcommand (bulk-remove merged workspaces).
-#[derive(Debug, Clone, Default)]
-pub struct PruneArgs {
-  /// Only report what would be pruned; do not modify anything.
-  pub dry_run: bool,
-  /// Skip all hooks during pruning.
-  pub no_hooks: bool,
   /// Output format (text, JSON, or statusline).
   pub format: OutputFormat,
 }
@@ -746,7 +778,7 @@ pub struct StatusFlags {
   pub stale: bool,
   /// Working copy has conflicts.
   pub conflicts: bool,
-  /// The bookmark has a remote-tracking variant (e.g. `<name>@origin`).
+  /// A bookmark in `trunk()..@` has been pushed, or `@` sits on trunk.
   pub has_remote: bool,
   /// Relationship of this workspace's `@` to trunk.
   pub vs_trunk: Option<TrunkRel>,
@@ -837,6 +869,15 @@ impl fmt::Display for CiStatus {
   }
 }
 
+/// A local bookmark between `trunk()` and a workspace's `@`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceBookmark {
+  /// Bookmark name.
+  pub name: String,
+  /// Pushed to a tracked remote other than the colocated `git` one.
+  pub has_remote: bool,
+}
+
 /// Raw per-workspace data observed by the shell for list rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedListRow {
@@ -848,30 +889,14 @@ pub struct ObservedListRow {
   pub ahead: u32,
   /// Commits behind trunk.
   pub behind: u32,
-  /// True when the bookmark for this workspace has a remote-tracking
-  /// variant (e.g. `<name>@origin`).
-  pub has_remote_bookmark: bool,
+  /// Local bookmarks in `trunk()..@`, nearest `@` first.
+  pub bookmarks: Vec<WorkspaceBookmark>,
   /// CI check status from forge CLI (gh/glab). Only populated when
   /// `--full` is used.
   pub ci_status: CiStatus,
   /// LLM-generated one-liner summary. Only populated when `--full` is
   /// used and `[list] summary = true`.
   pub summary: String,
-}
-
-/// State for the prune command: all workspaces with their merge status.
-#[derive(Debug, Clone, Default)]
-pub struct ObservedPruneState {
-  /// Absolute path to the repository root.
-  pub repo_root: PathBuf,
-  /// Whether the current directory is inside a jj repository.
-  pub is_jj_repo: bool,
-  /// Name of the workspace containing cwd, if any.
-  pub current_workspace: Option<String>,
-  /// All registered workspaces.
-  pub workspaces: Vec<Workspace>,
-  /// Per-workspace: (bookmark_exists, bookmark_merged, workspace_dirty).
-  pub workspace_status: Vec<(String, bool, bool, bool)>,
 }
 
 /// Presentation hints observed from the terminal environment. The shell
@@ -897,37 +922,13 @@ pub struct ObservedListState {
   pub current_workspace: Option<String>,
   /// Per-workspace observation data.
   pub rows: Vec<ObservedListRow>,
-  /// Names of bookmarks without a workspace, only populated when the
-  /// caller asked for `--bookmarks`.
-  pub extra_bookmark_names: Vec<String>,
-  /// Names of remote-only bookmarks, only populated when the caller
-  /// asked for `--remotes`. Format: bare local name (the `@<remote>`
-  /// suffix is stripped).
-  pub extra_remote_only_names: Vec<String>,
   /// Whether `--full` mode is active (show all columns).
   pub full: bool,
 }
 
-/// What kind of row this is. `Workspace` rows have a real path and full
-/// observation details. `Bookmark` rows are bookmarks without a workspace
-/// (either local-only-no-worktree or remote-only) and have empty
-/// working-copy state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ListRowKind {
-  /// Row represents a registered jj workspace.
-  #[default]
-  Workspace,
-  /// Row represents a bookmark without a workspace.
-  Bookmark,
-}
-
-/// Options that gate which rows `observe_list` collects.
+/// Options for `observe_list`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ListOptions {
-  /// Include local bookmarks that don't have a workspace.
-  pub include_bookmarks: bool,
-  /// Include remote-only bookmarks (`<name>@<remote>` with no local).
-  pub include_remotes: bool,
   /// Show additional columns (CI, URL, Commit, Age, Summary) and query
   /// CI status and LLM summaries when enabled.
   pub full: bool,
@@ -936,14 +937,12 @@ pub struct ListOptions {
 /// A fully resolved row for the list table, ready for rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListRow {
-  /// Workspace name (also bookmark name by jjwt convention).
+  /// Workspace name.
   pub name: String,
-  /// Absolute on-disk path of the workspace (empty for `Branch` rows).
+  /// Absolute on-disk path of the workspace.
   pub path: PathBuf,
   /// Relative display path for the list table (e.g. ".", "./sibling.feat").
   pub display_path: String,
-  /// Whether this row represents a workspace or a standalone branch.
-  pub kind: ListRowKind,
   /// Rendered from `[list].url`; "" if no config.
   pub url: String,
   /// Workspace whose path contains cwd.

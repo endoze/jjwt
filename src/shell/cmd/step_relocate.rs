@@ -12,13 +12,12 @@ use crate::shell::observe::observe;
 use crate::shell::proc::RealProc;
 use crate::shell::runtime::{Runtime, execute};
 
-/// Execute the `relocate` command: rename a workspace and optionally its bookmark.
+/// Execute the `relocate` command: rename a workspace and move its directory.
 pub fn run(
   cwd: &Path,
   config_path: Option<&Path>,
   old_name: String,
   new_name: String,
-  rename_bookmark: bool,
   format: OutputFormat,
 ) -> Result<()> {
   let cfg = load_merged_config(cwd, config_path)?;
@@ -37,7 +36,6 @@ pub fn run(
   let args = RelocateArgs {
     old_name,
     new_name,
-    rename_bookmark,
     format,
   };
   let plan = plan_relocate(&cfg, &args, &obs)?;
