@@ -56,6 +56,9 @@ minijinja = "2"
 # orphaning their on-disk worktrees. Coordinate any version change with
 # worktrunk's pin to preserve byte-fidelity of rendered templates.
 petname = { version = "=3.0.0", default-features = false, features = ["default-words"] }
+# Not used directly. petname 3.0.0 accepts petname-macros ^3.0.0, but 3.2.0
+# expands to `petname::lang`, which only exists in petname 3.2.
+petname-macros = "=3.0.0"
 sanitize-filename = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
