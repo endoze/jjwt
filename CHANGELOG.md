@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-10-03
+
+### Features
+
+- *(switch)* Adopt empty bookmarks in place instead of stacking
+- [**breaking**] Drop worktrunk git-isms and follow jj's model
+
+### Bug Fixes
+
+- *(switch)* Don't adopt root or immutable commits
+- *(deps)* Pin petname-macros to match petname
+
+### Tasks
+
+- Configure CodeRabbit for stacked PRs
+
+
 ## [0.1.2] - 2026-06-16
 
 ### Features
