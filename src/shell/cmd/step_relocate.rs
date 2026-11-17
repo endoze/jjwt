@@ -26,13 +26,7 @@ pub fn run(
   let fs = RealFs;
   let proc = RealProc;
 
-  let obs = observe(
-    &jj,
-    &fs,
-    cwd,
-    Some(&old_name),
-    &cfg.worktree_path_template,
-  )?;
+  let obs = observe(&jj, &fs, cwd, Some(&old_name), &cfg.worktree_path_template)?;
   let args = RelocateArgs {
     old_name,
     new_name,

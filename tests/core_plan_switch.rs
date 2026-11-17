@@ -249,9 +249,7 @@ fn switch_existing_no_create_emits_only_print() {
   assert_eq!(
     plan.actions,
     vec![Action::PrintLine(
-      PathBuf::from("/repo/../repo.feat-x")
-        .display()
-        .to_string()
+      PathBuf::from("/repo/../repo.feat-x").display().to_string()
     )]
   );
 }
@@ -921,10 +919,7 @@ fn create_adopts_empty_unoccupied_bookmark_in_place() {
     "an empty, unoccupied bookmark should be adopted in place"
   );
   assert!(
-    !plan
-      .actions
-      .iter()
-      .any(|a| matches!(a, Action::Note(_))),
+    !plan.actions.iter().any(|a| matches!(a, Action::Note(_))),
     "no divergence note when the bookmark is unoccupied"
   );
 }
@@ -959,10 +954,7 @@ fn create_does_not_edit_in_place_for_occupied_empty_bookmark() {
     "an occupied bookmark must fall back to a new child to avoid divergence"
   );
   assert!(
-    plan
-      .actions
-      .iter()
-      .any(|a| matches!(a, Action::Note(_))),
+    plan.actions.iter().any(|a| matches!(a, Action::Note(_))),
     "a note should explain why the bookmark was not adopted in place"
   );
 }
@@ -996,10 +988,7 @@ fn create_does_not_edit_in_place_for_non_empty_bookmark() {
     "a non-empty bookmark keeps the new-child-on-top behavior"
   );
   assert!(
-    !plan
-      .actions
-      .iter()
-      .any(|a| matches!(a, Action::Note(_))),
+    !plan.actions.iter().any(|a| matches!(a, Action::Note(_))),
     "no note for the ordinary non-empty case"
   );
 }

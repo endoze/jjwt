@@ -51,19 +51,16 @@ fn pick_interactive(items: &[String]) -> Result<String> {
   let input = items.join("\n");
 
   let options = SkimOptionsBuilder::default()
-    .height("40%".to_string())
-    .prompt("workspace> ".to_string())
-    .preview(Some(
-      "jj log --no-graph -r {}@ -T 'description' 2>/dev/null || echo '(no log)'".to_string(),
-    ))
+    .height("40%")
+    .prompt("workspace> ")
+    .preview("jj log --no-graph -r {}@ -T 'description' 2>/dev/null || echo '(no log)'")
     .build()
     .map_err(|e| anyhow::anyhow!("skim options: {e}"))?;
 
   let item_reader = SkimItemReader::default();
   let items = item_reader.of_bufread(Cursor::new(input));
 
-  let result =
-    Skim::run_with(&options, Some(items)).ok_or_else(|| anyhow::anyhow!("picker was cancelled"))?;
+  let result = Skim::run_with(options, Some(items)).map_err(|e| anyhow::anyhow!("picker: {e}"))?;
 
   if result.is_abort {
     anyhow::bail!("picker was cancelled");

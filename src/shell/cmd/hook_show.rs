@@ -27,13 +27,7 @@ pub fn run(
   let proc = RealProc;
 
   let obs = if expanded {
-    Some(observe(
-      &jj,
-      &fs,
-      cwd,
-      None,
-      &cfg.worktree_path_template,
-    )?)
+    Some(observe(&jj, &fs, cwd, None, &cfg.worktree_path_template)?)
   } else {
     None
   };

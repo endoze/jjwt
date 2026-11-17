@@ -46,10 +46,10 @@ impl Jj for FakeJj {
     let rev_str = rev.map(|r| format!(" @{r}")).unwrap_or_default();
     let edit_str = if edit_in_place { " edit" } else { "" };
 
-    self
-      .calls
-      .borrow_mut()
-      .push(format!("workspace_add {n} {}{rev_str}{edit_str}", p.display()));
+    self.calls.borrow_mut().push(format!(
+      "workspace_add {n} {}{rev_str}{edit_str}",
+      p.display()
+    ));
 
     if n == "fail" {
       return Err(anyhow::anyhow!("workspace_add boom"));

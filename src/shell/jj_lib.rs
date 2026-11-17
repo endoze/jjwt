@@ -9,12 +9,15 @@ use futures::StreamExt as _;
 use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
+use jj_lib::default_backend_factories::{
+  default_backend_factories, default_working_copy_factories, default_workspace_loader_factory,
+};
 use jj_lib::matchers::EverythingMatcher;
 use jj_lib::object_id::ObjectId as _;
 use jj_lib::ref_name::{RefName, WorkspaceName, WorkspaceNameBuf};
 use jj_lib::repo::{ReadonlyRepo, Repo as _, StoreFactories};
 use jj_lib::settings::UserSettings;
-use jj_lib::workspace::{Workspace, default_working_copy_factories};
+use jj_lib::workspace::{WorkingCopyFactories, Workspace, WorkspaceLoadError};
 
 use crate::core::types::{self, CommitInfo};
 use crate::shell::jj::{Jj, find_repo_root, workspace_dir};
@@ -28,6 +31,8 @@ pub struct JjLib {
   repo_root: PathBuf,
   /// Worktree-path template for resolving workspace directories.
   worktree_path_template: String,
+  /// The user's jj settings, resolved as the `jj` CLI resolves them.
+  settings: UserSettings,
   /// What `trunk()` resolved to at load time.
   trunk: Option<(types::Trunk, CommitId)>,
 }
@@ -43,19 +48,18 @@ impl JjLib {
   pub fn with_template(start: &Path, template: &str) -> Result<Self> {
     let repo_root = find_repo_root(start)?;
     let worktree_path_template = template.to_string();
-    let settings = minimal_settings()?;
-    let store_factories = StoreFactories::default();
+    let settings = load_settings(&repo_root)?;
+    let store_factories = default_backend_factories();
     let wc_factories = default_working_copy_factories();
 
-    let workspace = Workspace::load(&settings, &repo_root, &store_factories, &wc_factories)
+    let workspace = load_workspace(&settings, &repo_root, &store_factories, &wc_factories)
       .context("failed to load workspace")?;
 
     // Trigger a working-copy snapshot for every workspace so the repo
     // reflects current disk state. Every jj command does this for the
     // current workspace; we do all of them since `list` reads from all.
     {
-      let pre_repo = pollster::block_on(workspace.repo_loader().load_at_head())
-        .context("failed to load repo")?;
+      let pre_repo = pollster::block_on(workspace.load_at_head()).context("failed to load repo")?;
       let ws_dirs: Vec<PathBuf> = pre_repo
         .view()
         .wc_commit_ids()
@@ -71,14 +75,14 @@ impl JjLib {
     }
 
     // Load repo after snapshot — the op head may have changed.
-    let repo =
-      pollster::block_on(workspace.repo_loader().load_at_head()).context("failed to load repo")?;
+    let repo = pollster::block_on(workspace.load_at_head()).context("failed to load repo")?;
     let trunk = query_trunk(&repo_root);
 
     Ok(Self {
       repo: RwLock::new(repo),
       repo_root,
       worktree_path_template,
+      settings,
       trunk,
     })
   }
@@ -130,7 +134,7 @@ impl JjLib {
   fn work_head(&self, wc_id: &CommitId) -> Result<CommitId> {
     let commit = self.get_commit(wc_id)?;
     let repo = self.repo();
-    let empty = pollster::block_on(commit.is_empty(&*repo))?;
+    let empty = pollster::block_on(commit.is_empty(repo.index()))?;
 
     if empty && commit.description().is_empty() && commit.parent_ids().len() == 1 {
       return Ok(commit.parent_ids()[0].clone());
@@ -161,16 +165,14 @@ impl JjLib {
 
   /// Reload the repo at the current op head after an out-of-process write.
   fn reload(&self) -> Result<()> {
-    let settings = minimal_settings()?;
-    let ws = Workspace::load(
-      &settings,
+    let ws = load_workspace(
+      &self.settings,
       &self.repo_root,
-      &StoreFactories::default(),
+      &default_backend_factories(),
       &default_working_copy_factories(),
     )
     .context("failed to load workspace")?;
-    let repo =
-      pollster::block_on(ws.repo_loader().load_at_head()).context("failed to load repo")?;
+    let repo = pollster::block_on(ws.load_at_head()).context("failed to load repo")?;
 
     self.swap_repo(repo);
 
@@ -194,8 +196,7 @@ impl Jj for JjLib {
     let repo = self.repo();
     let wc_ids = repo.view().wc_commit_ids();
     let current_op_id = repo.op_id();
-    let settings = minimal_settings()?;
-    let store_factories = StoreFactories::default();
+    let store_factories = default_backend_factories();
     let wc_factories = default_working_copy_factories();
     let mut workspaces = Vec::with_capacity(wc_ids.len());
 
@@ -203,7 +204,7 @@ impl Jj for JjLib {
       let name = ws_name.as_str().to_string();
       let path = workspace_dir(&self.repo_root, &name, &self.worktree_path_template);
       let stale = path.is_dir()
-        && Workspace::load(&settings, &path, &store_factories, &wc_factories)
+        && load_workspace(&self.settings, &path, &store_factories, &wc_factories)
           .map(|ws| ws.working_copy().operation_id() != current_op_id)
           .unwrap_or(false);
 
@@ -234,6 +235,7 @@ impl Jj for JjLib {
       &repo,
       &jj_lib::local_working_copy::LocalWorkingCopyFactory {},
       WorkspaceNameBuf::from(name),
+      None,
     ))
     .context("workspace add failed")?;
 
@@ -255,9 +257,8 @@ impl Jj for JjLib {
       pollster::block_on(tx.repo_mut().rebase_descendants())
         .context("failed to rebase descendants")?;
 
-      let new_repo =
-        pollster::block_on(tx.commit(format!("check out {rev} in workspace {name}")))
-          .context("transaction commit failed")?;
+      let new_repo = pollster::block_on(tx.commit(format!("check out {rev} in workspace {name}")))
+        .context("transaction commit failed")?;
 
       self.swap_repo(new_repo);
     }
@@ -284,7 +285,7 @@ impl Jj for JjLib {
     let mut tx = repo.start_transaction();
     let ws_name = WorkspaceNameBuf::from(name);
 
-    pollster::block_on(tx.repo_mut().remove_wc_commit(&ws_name))
+    pollster::block_on(tx.repo_mut().remove_workspace(&ws_name))
       .context("workspace forget failed")?;
 
     pollster::block_on(tx.repo_mut().rebase_descendants())
@@ -331,7 +332,12 @@ impl Jj for JjLib {
     let repo = self.repo();
     let ref_name = RefName::new(name);
 
-    let Some(commit_id) = repo.view().get_local_bookmark(ref_name).as_normal().cloned() else {
+    let Some(commit_id) = repo
+      .view()
+      .get_local_bookmark(ref_name)
+      .as_normal()
+      .cloned()
+    else {
       return Ok((false, false));
     };
 
@@ -341,7 +347,7 @@ impl Jj for JjLib {
       .values()
       .any(|id| *id == commit_id);
     let commit = self.get_commit(&commit_id)?;
-    let empty = pollster::block_on(commit.is_empty(&*repo))?;
+    let empty = pollster::block_on(commit.is_empty(repo.index()))?;
 
     Ok((empty, occupied))
   }
@@ -350,7 +356,7 @@ impl Jj for JjLib {
     let commit_id = self.wc_commit_id(workspace)?;
     let commit = self.get_commit(&commit_id)?;
     let repo = self.repo();
-    let is_empty = pollster::block_on(commit.is_empty(&*repo))?;
+    let is_empty = pollster::block_on(commit.is_empty(repo.index()))?;
 
     Ok((!is_empty, false))
   }
@@ -575,7 +581,7 @@ impl Jj for JjLib {
 
     let old_ws_buf = WorkspaceNameBuf::from(old);
 
-    pollster::block_on(tx.repo_mut().remove_wc_commit(&old_ws_buf))
+    pollster::block_on(tx.repo_mut().remove_workspace(&old_ws_buf))
       .context("workspace rename failed")?;
 
     pollster::block_on(tx.repo_mut().rebase_descendants())
@@ -590,37 +596,71 @@ impl Jj for JjLib {
   }
 }
 
-/// Build minimal UserSettings for read-mostly operations.
-fn minimal_settings() -> Result<UserSettings> {
-  let mut config = StackedConfig::with_defaults();
-  let mut layer = ConfigLayer::empty(ConfigSource::User);
+/// Build UserSettings from the config the `jj` CLI resolves for `repo_root`,
+/// so commits and operations jjwt writes carry the user's identity and are
+/// signed per the user's `signing.*` config, as the CLI would sign them.
+///
+/// Errors if `jj` is not on PATH or `jj config list` fails.
+fn load_settings(repo_root: &Path) -> Result<UserSettings> {
+  settings_from_layer(resolved_jj_config(repo_root)?)
+}
 
-  layer
-    .set_value("user.name", "jjwt")
-    .context("set user.name")?;
-  layer
-    .set_value("user.email", "jjwt@localhost")
-    .context("set user.email")?;
-  layer
-    .set_value("operation.hostname", "localhost")
-    .context("set operation.hostname")?;
-  layer
-    .set_value("operation.username", "jjwt")
-    .context("set operation.username")?;
-  layer
-    .set_value("signing.behavior", "drop")
-    .context("set signing.behavior")?;
+/// UserSettings from jj-lib's defaults with `layer` on top.
+fn settings_from_layer(layer: ConfigLayer) -> Result<UserSettings> {
+  let mut config = StackedConfig::with_defaults();
 
   config.add_layer(layer);
 
-  UserSettings::from_config(config).context("settings error")
+  UserSettings::from_config_and_home_dir(config, std::env::home_dir()).context("settings error")
+}
+
+/// The effective config of the `jj` CLI for `repo_root`: user and repo config
+/// files, conditional scopes, and env overrides such as `JJ_USER` and
+/// `JJ_EMAIL`, without jj's built-in defaults.
+///
+/// jj-lib has no API for this; the discovery rules live in jj-cli, so asking
+/// the installed `jj` keeps jjwt in step with them.
+fn resolved_jj_config(repo_root: &Path) -> Result<ConfigLayer> {
+  let jj = which::which("jj").context("jj not found on PATH")?;
+  let out = std::process::Command::new(jj)
+    .current_dir(repo_root)
+    .arg("-R")
+    .arg(repo_root)
+    .args(["--ignore-working-copy", "--no-pager", "--color", "never"])
+    .args(["config", "list"])
+    .output()
+    .context("failed to spawn jj config list")?;
+
+  if !out.status.success() {
+    anyhow::bail!(
+      "`jj config list` failed in {}: {}",
+      repo_root.display(),
+      String::from_utf8_lossy(&out.stderr).trim()
+    );
+  }
+
+  let text = String::from_utf8(out.stdout).context("`jj config list` printed non-UTF-8")?;
+
+  ConfigLayer::parse(ConfigSource::User, &text).context("failed to parse `jj config list` output")
+}
+
+/// Load the jj workspace rooted at `path` with the default loader.
+fn load_workspace(
+  settings: &UserSettings,
+  path: &Path,
+  store_factories: &StoreFactories,
+  wc_factories: &WorkingCopyFactories,
+) -> Result<Workspace, WorkspaceLoadError> {
+  default_workspace_loader_factory()
+    .create(path)?
+    .load(settings, store_factories, wc_factories)
 }
 
 /// Count added/removed lines in a commit's diff vs its parent.
 fn diff_stat_counts(repo: &Arc<ReadonlyRepo>, commit: &Commit) -> Result<(u32, u32)> {
-  let parent_tree = pollster::block_on(commit.parent_tree(&**repo))?;
+  let parent_tree = pollster::block_on(commit.parent_tree(repo.index()))?;
   let commit_tree = commit.tree();
-  let diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
+  let diff_stream = parent_tree.diff(&commit_tree, &EverythingMatcher);
 
   futures::pin_mut!(diff_stream);
 
@@ -659,7 +699,7 @@ fn diff_stat_counts(repo: &Arc<ReadonlyRepo>, commit: &Commit) -> Result<(u32, u
 /// Read file content from a MergedTreeValue.
 fn materialize_tree_value(
   repo: &Arc<ReadonlyRepo>,
-  value: &jj_lib::merge::MergedTreeValue,
+  value: &jj_lib::backend::MergedTreeValue,
 ) -> Vec<u8> {
   let Some(tv) = value.as_resolved() else {
     return Vec::new();
@@ -680,7 +720,7 @@ fn materialize_tree_value(
   let mut buf = Vec::new();
 
   pollster::block_on(async {
-    use tokio::io::AsyncReadExt;
+    use futures::AsyncReadExt as _;
     let mut reader = reader;
     let _ = reader.read_to_end(&mut buf).await;
   });
@@ -720,7 +760,13 @@ fn is_mutable(repo_root: &Path, commit_id: &CommitId) -> bool {
   let Ok(out) = std::process::Command::new(jj)
     .arg("-R")
     .arg(repo_root)
-    .args(["--ignore-working-copy", "--color", "never", "log", "--no-graph"])
+    .args([
+      "--ignore-working-copy",
+      "--color",
+      "never",
+      "log",
+      "--no-graph",
+    ])
     .args(["-r", &revset, "-T", "commit_id"])
     .output()
   else {
@@ -794,4 +840,140 @@ fn query_trunk(repo_root: &Path) -> Option<(types::Trunk, CommitId)> {
   let id = CommitId::try_from_hex(&trunk.commit_id)?;
 
   Some((trunk, id))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::process::Command;
+
+  /// Identity plus ssh signing config (behavior `own`) for a fresh ed25519
+  /// key under `dir`, or `None` when `jj` or `ssh-keygen` is not on PATH.
+  fn ssh_signing_config(dir: &Path) -> Option<String> {
+    which::which("jj").ok()?;
+
+    let key = dir.join("key");
+    let allowed = dir.join("allowed_signers");
+    let keygen = Command::new(which::which("ssh-keygen").ok()?)
+      .args(["-q", "-t", "ed25519", "-N", "", "-C", "jjwt-test", "-f"])
+      .arg(&key)
+      .status()
+      .unwrap();
+
+    assert!(keygen.success());
+
+    let public = std::fs::read_to_string(dir.join("key.pub")).unwrap();
+
+    std::fs::write(&allowed, format!("config@example.com {}\n", public.trim())).unwrap();
+
+    Some(format!(
+      "user.name = \"Config User\"\n\
+       user.email = \"config@example.com\"\n\
+       signing.behavior = \"own\"\n\
+       signing.backend = \"ssh\"\n\
+       signing.key = {:?}\n\
+       signing.backends.ssh.allowed-signers = {:?}\n",
+      key.display().to_string(),
+      allowed.display().to_string(),
+    ))
+  }
+
+  /// stdout of `jj <args>` in `dir` with jj's user config rooted at `home`.
+  fn jj(dir: &Path, home: &Path, args: &[&str]) -> String {
+    let out = Command::new("jj")
+      .current_dir(dir)
+      .env("HOME", home)
+      .env("XDG_CONFIG_HOME", home)
+      .env_remove("JJ_CONFIG")
+      .env_remove("JJ_USER")
+      .env_remove("JJ_EMAIL")
+      .args(args)
+      .output()
+      .unwrap();
+
+    assert!(
+      out.status.success(),
+      "`jj {}` failed: {}",
+      args.join(" "),
+      String::from_utf8_lossy(&out.stderr)
+    );
+
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+  }
+
+  #[test]
+  fn rewritten_descendant_is_resigned_under_own() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let Some(config) = ssh_signing_config(tmp.path()) else {
+      eprintln!("skipping: jj or ssh-keygen not on PATH");
+
+      return;
+    };
+    let home = tmp.path().join("home");
+    let repo_root = tmp.path().join("repo");
+
+    std::fs::create_dir_all(home.join("jj")).unwrap();
+    std::fs::write(home.join("jj/config.toml"), &config).unwrap();
+
+    jj(tmp.path(), &home, &["git", "init", "repo"]);
+    jj(&repo_root, &home, &["describe", "-m", "parent"]);
+    jj(&repo_root, &home, &["new", "-m", "child"]);
+
+    let child_before = jj(
+      &repo_root,
+      &home,
+      &["log", "--no-graph", "-r", "@", "-T", "commit_id"],
+    );
+    let settings =
+      settings_from_layer(ConfigLayer::parse(ConfigSource::User, &config).unwrap()).unwrap();
+    let workspace = load_workspace(
+      &settings,
+      &repo_root,
+      &default_backend_factories(),
+      &default_working_copy_factories(),
+    )
+    .unwrap();
+    let repo = pollster::block_on(workspace.load_at_head()).unwrap();
+    let parent = repo
+      .store()
+      .get_commit(&CommitId::try_from_hex(&child_before).unwrap())
+      .unwrap()
+      .parent_ids()[0]
+      .clone();
+    let parent = repo.store().get_commit(&parent).unwrap();
+    let mut tx = repo.start_transaction();
+
+    pollster::block_on(
+      tx.repo_mut()
+        .rewrite_commit(&parent)
+        .set_description("parent v2")
+        .write(),
+    )
+    .unwrap();
+
+    assert_eq!(
+      pollster::block_on(tx.repo_mut().rebase_descendants()).unwrap(),
+      1
+    );
+
+    pollster::block_on(tx.commit("reword parent")).unwrap();
+
+    let child_after = jj(
+      &repo_root,
+      &home,
+      &[
+        "--ignore-working-copy",
+        "log",
+        "--no-graph",
+        "-r",
+        "@",
+        "-T",
+        r#"commit_id ++ " " ++ if(signature, signature.status(), "unsigned")"#,
+      ],
+    );
+    let (child_after_id, status) = child_after.split_once(' ').unwrap();
+
+    assert_ne!(child_after_id, child_before, "child was not rewritten");
+    assert_eq!(status, "good");
+  }
 }

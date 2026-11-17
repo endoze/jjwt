@@ -59,8 +59,8 @@ pub fn maybe_handle_env_completion() -> bool {
 
   if args.is_empty() {
     let all_args: Vec<OsString> = std::env::args_os().collect();
-    let _ = CompleteEnv::with_factory(completion_command)
-      .try_complete(all_args, current_dir.as_deref());
+    let _ =
+      CompleteEnv::with_factory(completion_command).try_complete(all_args, current_dir.as_deref());
 
     CONTEXT.with(|ctx| ctx.borrow_mut().take());
 
@@ -248,7 +248,10 @@ impl ValueCompleter for BookmarkCompleter {
       Err(_) => return Vec::new(),
     };
 
-    bookmarks.into_iter().map(CompletionCandidate::new).collect()
+    bookmarks
+      .into_iter()
+      .map(CompletionCandidate::new)
+      .collect()
   }
 }
 

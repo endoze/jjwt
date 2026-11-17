@@ -148,11 +148,7 @@ fn plan_switch_create(
     return Err(CoreError::WorkspaceExists(args.name.clone()));
   }
 
-  let ws_path = workspace_path(
-    &obs.repo_root,
-    &args.name,
-    &cfg.worktree_path_template,
-  )?;
+  let ws_path = workspace_path(&obs.repo_root, &args.name, &cfg.worktree_path_template)?;
 
   let mut plan = Plan::new();
 
@@ -549,9 +545,7 @@ pub fn plan_hook(
     .map(|(_, groups)| groups);
 
   if let Some(groups) = slot_match {
-    if groups.is_empty()
-      || groups.iter().all(|shg| shg.group.is_empty())
-    {
+    if groups.is_empty() || groups.iter().all(|shg| shg.group.is_empty()) {
       return Err(CoreError::HookNotFound(args.name.clone()));
     }
 
@@ -664,11 +658,7 @@ pub fn plan_relocate(
   }
 
   let old_path = ws.path.clone();
-  let new_path = workspace_path(
-    &obs.repo_root,
-    &args.new_name,
-    &cfg.worktree_path_template,
-  )?;
+  let new_path = workspace_path(&obs.repo_root, &args.new_name, &cfg.worktree_path_template)?;
 
   let mut plan = Plan::new();
 

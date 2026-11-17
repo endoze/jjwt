@@ -301,10 +301,7 @@ url = "http://example.com/{{ branch }}"
   );
 
   // Dirty the alpha workspace.
-  let alpha_name = format!(
-    "{}.alpha",
-    repo.file_name().unwrap().to_string_lossy()
-  );
+  let alpha_name = format!("{}.alpha", repo.file_name().unwrap().to_string_lossy());
   let alpha_path = repo.parent().unwrap().join(&alpha_name);
 
   std::fs::write(alpha_path.join("scratch.txt"), "scratch").unwrap();
@@ -1049,4 +1046,320 @@ fn switch_create_on_immutable_empty_bookmark_stacks_a_new_change() {
   );
 
   assert!(workspace_stacked_on_bookmark(tmp.path(), "frozen"));
+}
+
+/// Run `jj <args>` in `dir` with jj's user config rooted at `home` and no
+/// identity overrides from the test runner's environment.
+fn jj_isolated(dir: &Path, home: &Path) -> Command {
+  let mut cmd = jj();
+
+  cmd
+    .current_dir(dir)
+    .env("HOME", home)
+    .env("XDG_CONFIG_HOME", home)
+    .env_remove("JJ_CONFIG")
+    .env_remove("JJ_USER")
+    .env_remove("JJ_EMAIL");
+
+  cmd
+}
+
+/// stdout of `jj <args>` run through [`jj_isolated`] with `env` applied.
+fn jj_stdout(dir: &Path, home: &Path, env: &[(&str, &str)], args: &[&str]) -> String {
+  let out = jj_isolated(dir, home)
+    .envs(env.iter().copied())
+    .args(args)
+    .output()
+    .unwrap();
+
+  assert!(
+    out.status.success(),
+    "`jj {}` failed: {}",
+    args.join(" "),
+    String::from_utf8_lossy(&out.stderr)
+  );
+
+  String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Run `jjwt switch --create feat` in a repo whose jj user config sets
+/// `Config User <config@example.com>`, with `env` applied to both jjwt and jj.
+/// Asserts that the new workspace's commit and every jjwt-written operation
+/// carry the identity the jj CLI resolves under the same config and env.
+fn assert_switch_create_uses_jj_identity(env: &[(&str, &str)], name: &str, email: &str) {
+  let tmp = TempDir::new().unwrap();
+  let repo = tmp.path().join("repo");
+  let home = TempDir::new().unwrap();
+
+  std::fs::create_dir_all(home.path().join("jjwt")).unwrap();
+  std::fs::write(home.path().join("jjwt/config.toml"), "").unwrap();
+  std::fs::create_dir_all(home.path().join("jj")).unwrap();
+  std::fs::write(
+    home.path().join("jj/config.toml"),
+    "user.name = \"Config User\"\nuser.email = \"config@example.com\"\n",
+  )
+  .unwrap();
+
+  let init = jj_isolated(tmp.path(), home.path())
+    .envs(env.iter().copied())
+    .args(["git", "init"])
+    .arg(&repo)
+    .output()
+    .unwrap();
+
+  assert!(
+    init.status.success(),
+    "{}",
+    String::from_utf8_lossy(&init.stderr)
+  );
+
+  let out = jjwt_cmd(home.path())
+    .current_dir(&repo)
+    .env_remove("JJ_CONFIG")
+    .env_remove("JJ_USER")
+    .env_remove("JJ_EMAIL")
+    .envs(env.iter().copied())
+    .args(["switch", "--create", "feat", "--no-hooks"])
+    .output()
+    .unwrap();
+
+  assert!(
+    out.status.success(),
+    "{}",
+    String::from_utf8_lossy(&out.stderr)
+  );
+
+  let signature = jj_stdout(
+    &repo,
+    home.path(),
+    env,
+    &[
+      "--ignore-working-copy",
+      "log",
+      "--no-graph",
+      "-r",
+      "feat@",
+      "-T",
+      r#"author.name() ++ " <" ++ author.email() ++ ">|" ++ committer.name() ++ " <" ++ committer.email() ++ ">""#,
+    ],
+  );
+  let expected = format!("{name} <{email}>");
+
+  assert_eq!(signature, format!("{expected}|{expected}"));
+
+  let op_user = format!(
+    "{}@{}",
+    jj_stdout(
+      &repo,
+      home.path(),
+      env,
+      &["config", "get", "operation.username"]
+    ),
+    jj_stdout(
+      &repo,
+      home.path(),
+      env,
+      &["config", "get", "operation.hostname"]
+    ),
+  );
+  let ops = jj_stdout(
+    &repo,
+    home.path(),
+    env,
+    &[
+      "--ignore-working-copy",
+      "op",
+      "log",
+      "--no-graph",
+      "-T",
+      r#"if(!root, description.first_line() ++ "\t" ++ user ++ "\n")"#,
+    ],
+  );
+
+  for op in ops.lines() {
+    assert!(op.ends_with(&format!("\t{op_user}")), "{op}");
+  }
+}
+
+#[test]
+fn switch_create_uses_identity_from_jj_user_config() {
+  if which::which("jj").is_err() {
+    eprintln!("skipping e2e: jj not on PATH");
+
+    return;
+  }
+
+  assert_switch_create_uses_jj_identity(&[], "Config User", "config@example.com");
+}
+
+#[test]
+fn switch_create_uses_identity_from_jj_env_overrides() {
+  if which::which("jj").is_err() {
+    eprintln!("skipping e2e: jj not on PATH");
+
+    return;
+  }
+
+  assert_switch_create_uses_jj_identity(
+    &[("JJ_USER", "Env User"), ("JJ_EMAIL", "env@example.com")],
+    "Env User",
+    "env@example.com",
+  );
+}
+
+/// A fresh ed25519 key in `dir` and an allowed-signers file trusting it for
+/// `config@example.com`, or `None` when `ssh-keygen` is not on PATH.
+fn ssh_signing_key(dir: &Path) -> Option<(PathBuf, PathBuf)> {
+  let key = dir.join("key");
+  let allowed = dir.join("allowed_signers");
+  let keygen = Command::new(which::which("ssh-keygen").ok()?)
+    .args(["-q", "-t", "ed25519", "-N", "", "-C", "jjwt-test", "-f"])
+    .arg(&key)
+    .status()
+    .unwrap();
+
+  assert!(keygen.success());
+
+  let public = std::fs::read_to_string(dir.join("key.pub")).unwrap();
+
+  std::fs::write(&allowed, format!("config@example.com {}\n", public.trim())).unwrap();
+
+  Some((key, allowed))
+}
+
+/// Write the jj user config under `home`: identity `Config User` and ssh
+/// signing with `behavior` and `key`.
+fn write_signing_config(home: &Path, behavior: &str, key: &Path, allowed: &Path) {
+  std::fs::create_dir_all(home.join("jj")).unwrap();
+  std::fs::write(
+    home.join("jj/config.toml"),
+    format!(
+      "user.name = \"Config User\"\n\
+       user.email = \"config@example.com\"\n\
+       signing.behavior = {behavior:?}\n\
+       signing.backend = \"ssh\"\n\
+       signing.key = {:?}\n\
+       signing.backends.ssh.allowed-signers = {:?}\n",
+      key.display().to_string(),
+      allowed.display().to_string(),
+    ),
+  )
+  .unwrap();
+}
+
+/// A repo initialized with ssh signing under `behavior`, plus its fake home,
+/// key, and allowed-signers path. `None` when `jj` or `ssh-keygen` is missing.
+fn signing_repo(behavior: &str) -> Option<(TempDir, PathBuf, TempDir, PathBuf, PathBuf)> {
+  which::which("jj").ok()?;
+
+  let tmp = TempDir::new().unwrap();
+  let (key, allowed) = ssh_signing_key(tmp.path())?;
+  let repo = tmp.path().join("repo");
+  let home = TempDir::new().unwrap();
+
+  std::fs::create_dir_all(home.path().join("jjwt")).unwrap();
+  std::fs::write(home.path().join("jjwt/config.toml"), "").unwrap();
+  write_signing_config(home.path(), behavior, &key, &allowed);
+  jj_stdout(tmp.path(), home.path(), &[], &["git", "init", "repo"]);
+
+  Some((tmp, repo, home, key, allowed))
+}
+
+/// `jjwt switch --create feat --no-hooks` in `repo` under `home`.
+fn jjwt_switch_create_feat(repo: &Path, home: &Path) -> std::process::Output {
+  jjwt_cmd(home)
+    .current_dir(repo)
+    .env_remove("JJ_CONFIG")
+    .env_remove("JJ_USER")
+    .env_remove("JJ_EMAIL")
+    .args(["switch", "--create", "feat", "--no-hooks"])
+    .output()
+    .unwrap()
+}
+
+/// The signature status jj reports for `rev`, or `unsigned`.
+fn signature_status(repo: &Path, home: &Path, rev: &str) -> String {
+  jj_stdout(
+    repo,
+    home,
+    &[],
+    &[
+      "--ignore-working-copy",
+      "log",
+      "--no-graph",
+      "-r",
+      rev,
+      "-T",
+      r#"if(signature, signature.status(), "unsigned")"#,
+    ],
+  )
+}
+
+/// Assert jjwt signs the commit it creates exactly as the jj CLI signs a new
+/// commit under the same `behavior`, and that the result is `expected`.
+fn assert_switch_create_signs_like_jj(behavior: &str, expected: &str) {
+  let Some((_tmp, repo, home, _key, _allowed)) = signing_repo(behavior) else {
+    eprintln!("skipping e2e: jj or ssh-keygen not on PATH");
+
+    return;
+  };
+  let out = jjwt_switch_create_feat(&repo, home.path());
+
+  assert!(
+    out.status.success(),
+    "{}",
+    String::from_utf8_lossy(&out.stderr)
+  );
+
+  jj_stdout(&repo, home.path(), &[], &["new", "-m", "by the jj CLI"]);
+
+  assert_eq!(signature_status(&repo, home.path(), "feat@"), expected);
+  assert_eq!(signature_status(&repo, home.path(), "default@"), expected);
+}
+
+#[test]
+fn switch_create_signs_new_commit_under_own_signing() {
+  assert_switch_create_signs_like_jj("own", "good");
+}
+
+#[test]
+fn switch_create_leaves_new_commit_unsigned_under_drop_signing() {
+  assert_switch_create_signs_like_jj("drop", "unsigned");
+}
+
+#[test]
+fn switch_create_fails_when_signing_fails() {
+  let Some((tmp, repo, home, _key, allowed)) = signing_repo("own") else {
+    eprintln!("skipping e2e: jj or ssh-keygen not on PATH");
+
+    return;
+  };
+
+  write_signing_config(
+    home.path(),
+    "own",
+    &tmp.path().join("missing-key"),
+    &allowed,
+  );
+
+  let out = jjwt_switch_create_feat(&repo, home.path());
+  let stderr = String::from_utf8_lossy(&out.stderr);
+
+  assert!(!out.status.success(), "jjwt succeeded without signing");
+  assert!(stderr.contains("Signing error"), "{stderr}");
+
+  let workspaces = jj_stdout(
+    &repo,
+    home.path(),
+    &[],
+    &[
+      "--ignore-working-copy",
+      "workspace",
+      "list",
+      "-T",
+      "name ++ \"\\n\"",
+    ],
+  );
+
+  assert!(!workspaces.lines().any(|w| w == "feat"), "{workspaces}");
 }

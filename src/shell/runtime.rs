@@ -71,8 +71,13 @@ pub fn execute<J: Jj, F: Fs, P: Proc>(
         revision,
         edit_in_place,
       } => {
-        rt.jj
-          .workspace_add(&rt.repo_root, name, path, revision.as_deref(), *edit_in_place)?;
+        rt.jj.workspace_add(
+          &rt.repo_root,
+          name,
+          path,
+          revision.as_deref(),
+          *edit_in_place,
+        )?;
       }
       Action::JjSnapshot { path, stale, .. } => {
         rt.jj.workspace_snapshot(path, *stale)?;
