@@ -23,6 +23,10 @@ exclude = [
   "fixtures/",
   "docs/",
   "tests/",
+  ".coderabbit.base.yaml",
+  ".coderabbit.config.ts",
+  "deny.toml",
+  "rustfmt.toml",
 ]
 
 [features]
