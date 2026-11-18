@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1](https://github.com/endoze/jjwt/compare/v0.2.0...v0.2.1) - 2026-11-18
+
+### Other
+
+- maintenance pass for dependencies, CI, and release tooling
+
 ## [0.2.0] - 2026-10-03
 
 ### Features
