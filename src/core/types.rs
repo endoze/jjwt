@@ -496,9 +496,10 @@ impl Trunk {
   }
 }
 
-/// Oldest jj CLI (major, minor) jjwt works with: `jj util snapshot` first
-/// shipped in 0.39.
-pub const MIN_JJ_VERSION: (u32, u32) = (0, 39);
+/// Oldest jj CLI (major, minor) jjwt supports: the release matching the
+/// jj-lib version jjwt is built on, so both read and write the same repo
+/// format.
+pub const MIN_JJ_VERSION: (u32, u32) = (0, 47);
 
 /// Parse `jj version` output into (major, minor).
 ///

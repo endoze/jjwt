@@ -63,8 +63,7 @@ pub fn run(
     rt.repo_root = obs.repo_root.clone();
     rt.repo_id = crate::shell::config_loader::resolve_repo_identity(&obs.repo_root);
 
-    let plan =
-      plan_remove(&cfg, &name, &args, &obs).with_context(|| format!("remove '{name}'"))?;
+    let plan = plan_remove(&cfg, &name, &args, &obs).with_context(|| format!("remove '{name}'"))?;
 
     if args.dry_run {
       let output = match args.format {

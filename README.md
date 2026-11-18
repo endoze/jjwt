@@ -4,7 +4,7 @@ A workspace manager for [jujutsu](https://martinvonz.github.io/jj/) repositories
 
 ## Install
 
-jjwt needs the [jj](https://martinvonz.github.io/jj/) CLI 0.39 or newer on your `PATH`. `jjwt doctor` checks this.
+jjwt needs the [jj](https://martinvonz.github.io/jj/) CLI 0.47 or newer on your `PATH`. `jjwt doctor` checks this.
 
 ### Cargo
 

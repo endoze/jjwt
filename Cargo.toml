@@ -8,8 +8,7 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/endoze/jjwt"
 documentation = "https://docs.rs/jjwt"
-homepage = "https://github.com/endoze/jjwt"
-rust-version = "1.89.0"
+rust-version = "1.97.1"
 keywords = ["jujutsu", "jj", "workspace", "cli", "worktree"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = [
@@ -17,7 +16,6 @@ exclude = [
   ".github/",
   ".gitignore",
   ".config/",
-  "cliff.toml",
   "dist-workspace.toml",
   "flake.nix",
   "lcov.info",
@@ -49,31 +47,28 @@ futures = "0.3"
 indexmap = { version = "2", features = ["serde"] }
 # In-process jj backend — eliminates subprocess spawning. PINNED EXACT
 # because jj-lib has no API stability guarantee (pre-1.0).
-jj-lib = { version = "=0.41.0", features = ["git"] }
-minijinja = "2"
-# Wordlists for the `codename` template filter. PINNED EXACT — bumping this
-# can silently shift every existing user's codename-derived worktree path,
-# orphaning their on-disk worktrees. Coordinate any version change with
-# worktrunk's pin to preserve byte-fidelity of rendered templates.
-petname = { version = "=3.0.0", default-features = false, features = ["default-words"] }
-# Not used directly. petname 3.0.0 accepts petname-macros ^3.0.0, but 3.2.0
-# expands to `petname::lang`, which only exists in petname 3.2.
-petname-macros = "=3.0.0"
+jj-lib = { version = "=0.47.1", features = ["git"] }
+minijinja = "3"
+# Wordlists for the `codename` template filter. Pinned exactly to match
+# worktrunk's own exact pin, so codenames match worktrunk's byte for byte.
+# Bump only in lockstep with worktrunk: a different version shifts every
+# codename-derived worktree path and orphans existing worktrees.
+petname = { version = "=3.2.0", default-features = false, features = ["default-words"] }
+petname-macros = "=3.2.0"
 sanitize-filename = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
-skim = { version = "0.11", optional = true }
+skim = { version = "5", optional = true }
 thiserror = "2"
 # Syntax highlighting for hook command echoes (feature `syntax-highlighting`).
 # tree-sitter and tree-sitter-highlight track matching versions; tree-sitter-bash
-# may lag behind (0.25.x works with tree-sitter 0.26.x).
-tree-sitter = { version = "0.26", optional = true }
+# may lag behind (0.25.x works with tree-sitter 0.27.x).
+tree-sitter = { version = "0.27", optional = true }
 tree-sitter-bash = { version = "0.25.1", optional = true }
-tree-sitter-highlight = { version = "0.26", optional = true }
+tree-sitter-highlight = { version = "0.27", optional = true }
 toml = { version = "1", features = ["preserve_order"] }
-pollster = "0.4"
-tokio = { version = "1", features = ["io-util"] }
+pollster = "1"
 terminal_size = "0.4"
 unicode-width = "0.2"
 walkdir = "2"

@@ -305,7 +305,13 @@ fn obs_root_ws(name: &str) -> ObservedState {
 #[test]
 fn remove_refuses_default_workspace() {
   let cfg = MergedConfig::from_project(Config::default());
-  let err = plan_remove(&cfg, "default", &RemoveArgs::default(), &obs_root_ws("default")).unwrap_err();
+  let err = plan_remove(
+    &cfg,
+    "default",
+    &RemoveArgs::default(),
+    &obs_root_ws("default"),
+  )
+  .unwrap_err();
 
   assert!(matches!(err, CoreError::DefaultWorkspace(_)));
 }

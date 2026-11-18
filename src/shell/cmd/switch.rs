@@ -219,13 +219,7 @@ pub fn run(cwd: &Path, config_path: Option<&Path>, mut args: SwitchArgs) -> Resu
     )?;
   args.name = resolved_name;
 
-  let obs = observe(
-    &jj,
-    &fs,
-    cwd,
-    Some(&args.name),
-    &cfg.worktree_path_template,
-  )?;
+  let obs = observe(&jj, &fs, cwd, Some(&args.name), &cfg.worktree_path_template)?;
   let plan = plan_switch(&cfg, &args, &obs)?;
 
   if args.dry_run {

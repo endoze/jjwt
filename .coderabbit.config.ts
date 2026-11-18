@@ -1,4 +1,8 @@
-import { defineConfig, type CodeRabbitContext } from "@coderabbitai/config"
+import { defineConfig, mergeConfig, type CodeRabbitContext } from "@coderabbitai/config"
+// Shared settings live in YAML so they match the other crates' .coderabbit.yaml.
+// A root .coderabbit.yaml would override this file entirely and drop the
+// trust gate below, so the YAML uses a name CodeRabbit does not auto-load.
+import base from "./.coderabbit.base.yaml"
 
 /** Repository associations that carry push access on a personal-account repo. */
 const TRUSTED_ASSOCIATIONS = ["OWNER", "COLLABORATOR"]
@@ -12,12 +16,10 @@ function authorCanPush(ctx: CodeRabbitContext): boolean {
 export default defineConfig((ctx: CodeRabbitContext) => {
   const trusted = authorCanPush(ctx)
 
-  return {
+  return mergeConfig(base, {
     reviews: {
       auto_review: {
         enabled: trusted,
-        // Stacked PRs target each other's branches, not just the default branch.
-        base_branches: [".*"],
       },
       // `@coderabbitai review` bypasses `auto_review.enabled`, so untrusted PRs
       // also get an empty file set to leave nothing for a manual review to cover.
@@ -26,5 +28,5 @@ export default defineConfig((ctx: CodeRabbitContext) => {
     chat: {
       auto_reply: trusted,
     },
-  }
+  })
 })

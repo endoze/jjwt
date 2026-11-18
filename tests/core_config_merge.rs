@@ -48,10 +48,7 @@ fn merge_scalars_user_default_when_project_absent() {
   let merged = MergedConfig::from_layers(Some(&user), Some(&project));
 
   assert_eq!(merged.background_remove, Some(true));
-  assert_eq!(
-    merged.worktree_path_template.as_str(),
-    ".wt/{{ branch }}"
-  );
+  assert_eq!(merged.worktree_path_template.as_str(), ".wt/{{ branch }}");
   assert!(merged.list.is_some());
 }
 
@@ -405,10 +402,7 @@ fn three_layer_worktree_path_override_as_middle_layer() {
   let merged =
     MergedConfig::from_layers_with_project_id(Some(&user), Some("github.com/owner/repo"), None);
 
-  assert_eq!(
-    merged.worktree_path_template.as_str(),
-    ".wt/{{ branch }}"
-  );
+  assert_eq!(merged.worktree_path_template.as_str(), ".wt/{{ branch }}");
 
   // With project config → project wins
   let project = Config {
